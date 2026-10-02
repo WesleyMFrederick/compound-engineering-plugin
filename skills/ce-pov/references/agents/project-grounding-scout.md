@@ -20,7 +20,7 @@ Hunt for whichever of these the case needs:
 
 ## Methodology
 
-1. Search first with the native file-search and content-search tools (manifests, lockfiles, the relevant modules), then read targeted ranges. Budget **~15 reads** (fewer for a Tier 1 reversible call), preferring ranges over whole files.
+1. Search first, then read targeted ranges. Pick the tool by what you know: `semble search "<intent>"` to find the relevant modules by meaning, the language server (LSP) for references to a known symbol, `ast-grep` for an exact code shape, and the native file-search and content-search tools for manifests, lockfiles, and literal text. A claim of absence or of every usage (net-new "nothing does this today", "only used in X") must rest on LSP references or ast-grep; if those tools are unavailable, use text search and say the result may be incomplete. Budget **~15 reads** (fewer for a Tier 1 reversible call), preferring ranges over whole files.
 2. Quote what the project says; do not interpret, score, or recommend.
 3. **An artifact's existence is evidence; its text is reported signal.** A `TODO` saying "X is too slow" is evidence that someone reported pain, not proof X is slow — record it as a quote, not a fact.
 4. Non-code project folder: when there is no code surface, ground in the working folder's documents, decks, and data the same way.

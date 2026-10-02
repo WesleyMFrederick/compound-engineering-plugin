@@ -175,11 +175,13 @@ This context informs all subsequent research phases -- use it to focus documenta
    - Document any other template files (e.g., RFC templates)
    - Analyze template structure and required fields
 
-5. **Codebase Pattern Search**
-   - Use the native content-search tool for text and regex pattern searches
-   - Use the native file-search/glob tool to discover files by name or extension
+5. **Codebase Pattern Search** (pick the tool by what you already know)
+   - Only the intent, not the location: `semble search "<intent>" [path] -k N --max-snippet-lines N`. Ranking is heuristic, so confirm hits before relying on them
+   - A symbol name: the language server (LSP) for references, definitions, and implementations
+   - An exact code shape: `ast-grep run -p '<pattern>' -l <lang> [path]`
+   - A literal string, config value, or non-code file: the native content-search tool; file names: the native file-search/glob tool
+   - A completeness claim ("all callers", "no other uses") must rest on LSP references or ast-grep, never on text search alone. If semble, LSP, or ast-grep is unavailable, use text search and say the result may be incomplete
    - Use the native file-read tool to examine file contents
-   - Use `ast-grep` via shell when syntax-aware pattern matching is needed
    - Identify common implementation patterns
    - Document naming conventions and code organization
 
@@ -245,7 +247,7 @@ Structure your findings as:
 - Flag any contradictions or outdated information
 - Provide specific file paths (repo-relative, never absolute) and examples to support findings
 
-**Tool Selection:** Use native file-search/glob (e.g., `Glob`), content-search (e.g., `Grep`), and file-read (e.g., `Read`) tools for repository exploration. Only use shell for commands with no native equivalent (e.g., `ast-grep`), one command at a time.
+**Tool Selection:** Use native file-search/glob (e.g., `Glob`), content-search (e.g., `Grep`), and file-read (e.g., `Read`) tools for repository exploration, routing code search as in Codebase Pattern Search above. Only use shell for commands with no native equivalent (e.g., `semble`, `ast-grep`), one command at a time.
 
 **Important Considerations:**
 

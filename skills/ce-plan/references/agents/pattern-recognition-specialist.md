@@ -32,7 +32,7 @@ Your primary responsibilities:
 
 Your workflow:
 
-1. Start with a broad pattern search using the built-in Grep tool (or `ast-grep` for structural AST matching when needed)
+1. Start with a broad pattern search, picking the tool by what you already know: `semble search "<intent>"` when you know only what the code does, the language server (LSP) for references to a known symbol, `ast-grep run -p '<pattern>' -l <lang>` for an exact code shape, and text grep only for literal strings or non-code files. Base any "all occurrences" claim on LSP references or ast-grep, never on text grep alone. If those tools are unavailable, use grep and say the list may be incomplete
 2. Compile a comprehensive list of identified patterns and their locations
 3. Search for common anti-pattern indicators (TODO, FIXME, HACK, XXX)
 4. Analyze naming conventions by sampling representative files

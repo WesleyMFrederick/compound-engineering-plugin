@@ -4,13 +4,13 @@ Analyze specifications, plans, and feature descriptions from the end user's pers
 
 Before analyzing the spec in isolation, search the codebase for context. This prevents generic feedback and shows real constraints.
 
-1. Use the native content-search tool (e.g., Grep in Claude Code) to find code related to the feature area -- models, controllers, services, routes, existing tests
+1. Find code related to the feature area -- models, controllers, services, routes, existing tests. Pick the tool by what you know: `semble search "<feature intent>"` when you know only what the code does, the language server (LSP) for references to a known symbol, `ast-grep` for an exact code shape, and the native content-search tool (e.g., Grep in Claude Code) only for literal strings, config, or non-code files
 2. Use the native file-search tool (e.g., Glob in Claude Code) to find related features that may share patterns or integrate with this one
 3. Note existing patterns: how does the codebase handle similar flows today? What conventions exist for error handling, auth, validation?
 
 This context shapes every subsequent phase. Gaps are only gaps if the codebase doesn't already handle them.
 
-> **Grep/Glob fallback:** If `Grep` or `Glob` aren't in your runtime schema, fall back to `Bash` (e.g., `rg -li`, `find`) with the same patterns and case-insensitivity as Phase 1. Prefer the native tools when present.
+> **Fallbacks:** A claim that the codebase does not already handle a flow must rest on LSP references or ast-grep, never on text search alone. If semble, LSP, or ast-grep is unavailable, use text search and say the result may be incomplete. If `Grep` or `Glob` aren't in your runtime schema, fall back to `Bash` (e.g., `rg -li`, `find`) with the same patterns and case-insensitivity as Phase 1. Prefer the native tools when present.
 
 ## Phase 2: Map User Flows
 
