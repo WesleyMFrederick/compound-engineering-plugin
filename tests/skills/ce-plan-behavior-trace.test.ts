@@ -39,20 +39,21 @@ describe("ce-plan traces behavior before a dependent choice", () => {
 describe("ce-plan research dossiers stay out of the planning context", () => {
   const research = read("references/research.md")
 
-  test("phase 1 creates one scratch directory and names each researcher's file", () => {
+  test("phase 1 resolves one research directory and names each researcher's file", () => {
     expect(research).toContain('SCRATCH_ROOT="/tmp/compound-engineering-$(id -u)"')
-    expect(research).toContain('SCRATCH_DIR="$SCRATCH_ROOT/ce-plan-research/')
+    expect(research).toContain('RESEARCH_DIR="<absolute feature folder>/research"')
+    expect(research).toContain('RESEARCH_DIR="$SCRATCH_ROOT/ce-plan-research/')
     expect(research).not.toContain("mktemp")
     expect(research).toContain("Do not load every dossier into context")
     for (const file of [
-      "$SCRATCH_DIR/repo-research.md",
-      "$SCRATCH_DIR/learnings.md",
-      "$SCRATCH_DIR/agent-native.md",
-      "$SCRATCH_DIR/slack.md",
-      "$SCRATCH_DIR/best-practices.md",
-      "$SCRATCH_DIR/framework-docs.md",
-      "$SCRATCH_DIR/web.md",
-      "$SCRATCH_DIR/spec-flow.md",
+      "$RESEARCH_DIR/repo-research.md",
+      "$RESEARCH_DIR/learnings.md",
+      "$RESEARCH_DIR/agent-native.md",
+      "$RESEARCH_DIR/slack.md",
+      "$RESEARCH_DIR/best-practices.md",
+      "$RESEARCH_DIR/framework-docs.md",
+      "$RESEARCH_DIR/web.md",
+      "$RESEARCH_DIR/spec-flow.md",
     ]) {
       expect(research).toContain(file)
     }

@@ -33,7 +33,19 @@ For Standard and Deep, prepare a concise planning context summary (a paragraph o
 
 Pass the project's active instructions and the planning context summary to `repo-research-analyst`, and send it directly to the requested current scopes. If the feature cannot be scoped from that context, allow one targeted root or workspace probe. Read an exact dependency or runtime version when the plan or an external-doc query materially depends on it.
 
-When this phase dispatches a researcher, create one scratch directory first and reuse that absolute path for every researcher this run. Pass each researcher the absolute path of its own file. It writes its document there and returns a gist plus that path. Read a dossier when its gist can change a decision. Do not load every dossier into context. Later dispatches in this phase reuse the directory. If a later dispatch is the first one, create the directory then.
+When this phase dispatches a researcher, resolve one research directory first and reuse that absolute path for every researcher this run. Pass each researcher the absolute path of its own file. It writes its document there and returns a gist plus that path. Read a dossier when its gist can change a decision. Do not load every dossier into context. Later dispatches in this phase reuse the directory. If a later dispatch is the first one, resolve the directory then.
+
+<!-- ce-research-dir:start -->
+**Save research dossiers beside the work, not in temp.** A later reader checking the plan needs the research it rests on, so it lives with the feature and survives the session.
+
+- **Feature folder:** the folder the user named for this work, or the folder that holds this run's input or output document when that folder holds only this work. Never use a shared folder such as `<root>/plans/` or the repo root.
+- **With a feature folder:** set `RESEARCH_DIR="<absolute feature folder>/research"` and run `mkdir -p "$RESEARCH_DIR"`. Each researcher writes its fixed file name there; a rerun replaces that file.
+- **Without one** (no repo, or no folder holds only this work): use this skill's private temp fallback below, still naming the path `RESEARCH_DIR`, and say in one line that this run's research will not be kept.
+- **Sources:** each dossier cites `file:line` for repo facts and a URL for outside facts, and marks anything it did not read in a source as inference. Dossiers are raw research, not verified evidence.
+- **Link them:** the written plan or requirements doc links each dossier it relied on by relative path, such as `research/repo-research.md`.
+<!-- ce-research-dir:end -->
+
+Private temp fallback, only when no feature folder exists:
 
 ```bash
 SCRATCH_ROOT="/tmp/compound-engineering-$(id -u)";
@@ -42,17 +54,17 @@ if [ -L "$SCRATCH_ROOT" ]; then echo "unsafe scratch root symlink: $SCRATCH_ROOT
 (umask 077; mkdir -p "$SCRATCH_ROOT") || exit 1;
 if [ -L "$SCRATCH_ROOT" ] || [ ! -O "$SCRATCH_ROOT" ]; then echo "scratch root is not owned by the current user: $SCRATCH_ROOT" >&2; exit 1; fi;
 chmod 700 "$SCRATCH_ROOT" || exit 1;
-SCRATCH_DIR="$SCRATCH_ROOT/ce-plan-research/$(openssl rand -hex 4)";
-(umask 077; mkdir -p "$SCRATCH_DIR") || exit 1; chmod 700 "$SCRATCH_DIR" || exit 1;
-echo "$SCRATCH_DIR";
+RESEARCH_DIR="$SCRATCH_ROOT/ce-plan-research/$(openssl rand -hex 4)";
+(umask 077; mkdir -p "$RESEARCH_DIR") || exit 1; chmod 700 "$RESEARCH_DIR" || exit 1;
+echo "$RESEARCH_DIR";
 ```
 
 Run these agents in parallel:
 
-- `references/agents/repo-research-analyst.md` — scope: **patterns**. Pass the planning context summary and `$SCRATCH_DIR/repo-research.md` so it can go directly to current feature patterns and the code that implements them.
-- `references/agents/learnings-researcher.md` — pass the planning context summary, the search-root list from **Pack discovery**, and `$SCRATCH_DIR/learnings.md`. When the origin document already carries `(pack: …)` citations, pass those pack ids and file paths too so the researcher skips re-reading cited files and searches only for gaps (the same pass-through shape as the Slack context section below). Dispatch it only when at least one search root holds a markdown file; an empty or missing store has nothing to search.
+- `references/agents/repo-research-analyst.md` — scope: **patterns**. Pass the planning context summary and `$RESEARCH_DIR/repo-research.md` so it can go directly to current feature patterns and the code that implements them.
+- `references/agents/learnings-researcher.md` — pass the planning context summary, the search-root list from **Pack discovery**, and `$RESEARCH_DIR/learnings.md`. When the origin document already carries `(pack: …)` citations, pass those pack ids and file paths too so the researcher skips re-reading cited files and searches only for gaps (the same pass-through shape as the Slack context section below). Dispatch it only when at least one search root holds a markdown file; an empty or missing store has nothing to search.
 
-**Agent-native planning triage** (conditional) — consider broadly, dispatch selectively. Dispatch a generic subagent with `references/agents/agent-native-planning-strategist.md` and `$SCRATCH_DIR/agent-native.md` in parallel with the local research agents when the request, origin document, or repo research indicates any of:
+**Agent-native planning triage** (conditional) — consider broadly, dispatch selectively. Dispatch a generic subagent with `references/agents/agent-native-planning-strategist.md` and `$RESEARCH_DIR/agent-native.md` in parallel with the local research agents when the request, origin document, or repo research indicates any of:
 
 - agent, assistant, chat, workflow automation, MCP, plugin, skill, tool registry, prompt, or autonomous-loop work
 - a codebase with an existing agent surface where this feature changes user-visible capabilities
@@ -71,7 +83,7 @@ Collect:
 
 **Slack context** (opt-in) — never auto-dispatch. Route by condition:
 
-- **Tools available + user asked**: Dispatch a generic subagent with `references/agents/slack-researcher.md`, the planning context summary, and `$SCRATCH_DIR/slack.md` in parallel with other Phase 1.1 agents. If the origin document has a Slack context section, pass it verbatim so the researcher focuses on gaps. Include findings in consolidation.
+- **Tools available + user asked**: Dispatch a generic subagent with `references/agents/slack-researcher.md`, the planning context summary, and `$RESEARCH_DIR/slack.md` in parallel with other Phase 1.1 agents. If the origin document has a Slack context section, pass it verbatim so the researcher focuses on gaps. Include findings in consolidation.
 - **Tools available + user didn't ask**: Note in output: "Slack tools detected. Ask me to search Slack for organizational context at any point, or include it in your next prompt."
 - **No tools + user asked**: Note in output: "Slack context was requested but no Slack tools are available. Install and authenticate the Slack plugin to enable organizational context search."
 
@@ -144,16 +156,16 @@ Announce the decision and the intent briefly before continuing. Examples:
 If Step 1.2 indicates external research is useful, dispatch by the **intent** classified in Stage 2, using the platform's subagent primitive (`Agent`/`Task` in Claude Code, `spawn_agent` in Codex) where available; otherwise run the work inline or serially. Read the selected prompt asset from `references/agents/` and seed a generic subagent with it. For `web-researcher.md`, pass a focus hint plus the planning context summary and do **not** pass codebase content — it operates externally.
 
 - **Implementation-guidance** — run in parallel:
-  - `references/agents/best-practices-researcher.md` with the planning context summary and `$SCRATCH_DIR/best-practices.md`.
-  - `references/agents/framework-docs-researcher.md` with the planning context summary, `$SCRATCH_DIR/framework-docs.md`, and exact frameworks/versions from Phase 1.1 where available.
-- **Landscape / option-discovery** — `references/agents/web-researcher.md` with the focus hint, the planning context summary, and `$SCRATCH_DIR/web.md`. When the request targets projects on a code host (e.g., "competitors on GitHub"), name the discovery dimensions in the focus hint: project names and URLs, release recency and activity, CLI/UX shape, install path, docs and examples, plugin/extension surfaces, recurring issue themes, and license — treating star counts as a weak signal only.
-- **Mixed** — **sequential, not parallel**: run the `web-researcher` local prompt first, writing `$SCRATCH_DIR/web.md`, to map the landscape and produce a shortlist; then run the `framework-docs-researcher` and/or `best-practices-researcher` local prompts, writing `$SCRATCH_DIR/framework-docs.md` and `$SCRATCH_DIR/best-practices.md`, against the shortlisted technologies only when their details materially shape the plan.
+  - `references/agents/best-practices-researcher.md` with the planning context summary and `$RESEARCH_DIR/best-practices.md`.
+  - `references/agents/framework-docs-researcher.md` with the planning context summary, `$RESEARCH_DIR/framework-docs.md`, and exact frameworks/versions from Phase 1.1 where available.
+- **Landscape / option-discovery** — `references/agents/web-researcher.md` with the focus hint, the planning context summary, and `$RESEARCH_DIR/web.md`. When the request targets projects on a code host (e.g., "competitors on GitHub"), name the discovery dimensions in the focus hint: project names and URLs, release recency and activity, CLI/UX shape, install path, docs and examples, plugin/extension surfaces, recurring issue themes, and license — treating star counts as a weak signal only.
+- **Mixed** — **sequential, not parallel**: run the `web-researcher` local prompt first, writing `$RESEARCH_DIR/web.md`, to map the landscape and produce a shortlist; then run the `framework-docs-researcher` and/or `best-practices-researcher` local prompts, writing `$RESEARCH_DIR/framework-docs.md` and `$RESEARCH_DIR/best-practices.md`, against the shortlisted technologies only when their details materially shape the plan.
 
 **Tool-unavailable handling.** `web-researcher` self-checks for web tools and stops if they are missing. Never block on this: if it reports research unavailable, or any researcher fails, warn and proceed, and carry the gap into Phase 1.4 so the plan records it honestly — especially when the user explicitly requested external research, where a silent skip would leave the plan looking evidence-based when it is not.
 
 #### 1.4 Consolidate Research
 
-Read a dossier when its gist can change a decision. Open `$SCRATCH_DIR/learnings.md` when that dispatch ran, and show the user any `Skipped pack files` line once. Do not load every dossier into context.
+Read a dossier when its gist can change a decision. Open `$RESEARCH_DIR/learnings.md` when that dispatch ran, and show the user any `Skipped pack files` line once. Do not load every dossier into context.
 
 Summarize:
 - Relevant codebase patterns and file paths
@@ -195,7 +207,7 @@ When `ce-explain` cannot be invoked, run one extraction pass that answers the sa
 
 For **Standard** or **Deep** plans, or when user flow completeness is still unclear, run:
 
-- `references/agents/spec-flow-analyzer.md` with the planning context summary, the research findings, the behavior trace when one exists, and `$SCRATCH_DIR/spec-flow.md`. Create the scratch directory with the Phase 1.1 command first when this run does not already have one.
+- `references/agents/spec-flow-analyzer.md` with the planning context summary, the research findings, the behavior trace when one exists, and `$RESEARCH_DIR/spec-flow.md`. Resolve the research directory with the Phase 1.1 rule first when this run does not already have one.
 
 Use the output to:
 - Identify missing edge cases, state transitions, or handoff gaps
