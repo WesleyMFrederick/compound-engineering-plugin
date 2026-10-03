@@ -1679,6 +1679,49 @@ describe("cross-model-doc-review omp transport", () => {
     expect(r.stderr).toContain("usage limit reached")
   }, 20_000)
 
+  const FINDINGS_TEXT = [{ type: "text", text: '{"reviewer":"adversarial","findings":[]}' }]
+
+  test("Given omp reports a dated snapshot of the requested model, When the run folds in, Then model_actual is the served id", () => {
+    // Given the server served a dated snapshot of gpt-6-luna
+    // When the run normalizes the output
+    const { r, runDir } = runOmp(["omp"], {
+      role: "assistant", content: FINDINGS_TEXT, usage: USAGE, stopReason: "stop",
+      model: "gpt-6-luna", upstreamModel: "gpt-6-luna-2026-09-01",
+    })
+    // Then the artifact records the served id as a matching receipt
+    const out = JSON.parse(readFileSync(path.join(runDir, "adversarial-codex.json"), "utf8"))
+    expect(out.model_requested).toBe("gpt-6-luna")
+    expect(out.model_actual).toBe("gpt-6-luna-2026-09-01")
+    expect(r.stderr).toContain("served model: gpt-6-luna-2026-09-01 (requested gpt-6-luna)")
+    expect(r.stderr).not.toContain("model mismatch")
+  }, 20_000)
+
+  test("Given omp served a different model than requested, When the run folds in, Then model_actual names it and a mismatch is warned", () => {
+    // Given omp resolved the request to an older model and the server served that one
+    // When the run normalizes the output
+    const { r, runDir } = runOmp(["omp"], {
+      role: "assistant", content: FINDINGS_TEXT, usage: USAGE, stopReason: "stop",
+      model: "gpt-5.6-luna", upstreamModel: "gpt-5.6-luna",
+    })
+    // Then the substitution is visible in the artifact and on stderr
+    const out = JSON.parse(readFileSync(path.join(runDir, "adversarial-codex.json"), "utf8"))
+    expect(out.model_requested).toBe("gpt-6-luna")
+    expect(out.model_actual).toBe("gpt-5.6-luna")
+    expect(r.stderr).toContain("WARNING: model mismatch - requested gpt-6-luna, backend served gpt-5.6-luna")
+  }, 20_000)
+
+  test("Given omp reports no served model, When the run folds in, Then model_actual stays unverified and never copies omp's echoed id", () => {
+    // Given omp echoes the requested id but carries no server receipt
+    // When the run normalizes the output
+    const { r, runDir } = runOmp(["omp"], {
+      role: "assistant", content: FINDINGS_TEXT, usage: USAGE, stopReason: "stop", model: "gpt-6-luna",
+    })
+    // Then the receipt is unverified and the gap is warned
+    const out = JSON.parse(readFileSync(path.join(runDir, "adversarial-codex.json"), "utf8"))
+    expect(out.model_actual).toBe("unverified")
+    expect(r.stderr).toContain("WARNING: omp reported no served model for requested gpt-6-luna")
+  }, 20_000)
+
   test("Given omp absent, When the codex target runs, Then the native codex CLI carries it and usage stays null", () => {
     // Given only the codex CLI installed
     const codexStub =

@@ -2102,7 +2102,7 @@ describe("cross-model-adversarial-review omp transport", () => {
     cost: { input: 0.0001866, output: 0.0000045, cacheRead: 0, cacheWrite: 0, total: 0.0001911 },
   }
 
-  function runOmp(installed: string[]) {
+  function runOmp(installed: string[], receipt: Record<string, string> = {}) {
     const root = mkTempRoot("xmodel-cr-omp-")
     const events = path.join(root, "events.jsonl")
     const assistant = {
@@ -2110,6 +2110,7 @@ describe("cross-model-adversarial-review omp transport", () => {
       content: [{ type: "text", text: '{"reviewer":"adversarial","findings":[{"title":"t"}],"residual_risks":[],"testing_gaps":[]}' }],
       usage: USAGE,
       stopReason: "stop",
+      ...receipt,
     }
     writeFileSync(events, JSON.stringify({ type: "agent_end", messages: [assistant] }) + "\n")
     const { env } = sandbox(installed, OMP_STUB)
@@ -2135,7 +2136,20 @@ describe("cross-model-adversarial-review omp transport", () => {
     const out = JSON.parse(readFileSync(path.join(runDir, "adversarial-codex.json"), "utf8"))
     expect(out.cross_model_harness).toBe("omp")
     expect(out.usage.totalTokens).toBe(1875)
+    expect(out.receipt_supported).toBe(false)
     expect(out.usage.cost).toBe(0.0001911)
+  }, 20_000)
+
+  test("Given omp served a different model than requested, When the run folds in, Then model_actual names it and a mismatch is warned", () => {
+    // Given the server served gpt-5.6-luna for a gpt-6-luna request
+    // When the codex route runs over omp
+    const { r, runDir } = runOmp(["omp"], { model: "gpt-5.6-luna", upstreamModel: "gpt-5.6-luna" })
+    // Then the substitution is visible in the artifact and on stderr
+    const out = JSON.parse(readFileSync(path.join(runDir, "adversarial-codex.json"), "utf8"))
+    expect(out.model_requested).toBe("gpt-6-luna")
+    expect(out.model_actual).toBe("gpt-5.6-luna")
+    expect(out.receipt_supported).toBe(true)
+    expect(r.stderr).toContain("WARNING: model mismatch - requested gpt-6-luna, backend served gpt-5.6-luna")
   }, 20_000)
 
   test("Given omp absent, When the codex target runs, Then the native codex CLI carries it", () => {

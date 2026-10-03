@@ -140,9 +140,13 @@ route_effort() {   # <route> -> requested effort: the override where the route t
   esac
 }
 
-route_receipt_supported() {
+route_receipt_supported() {   # <route>; omp supports it only when the server named the model
+  if [ "$PEER_TRANSPORT" = "omp" ]; then
+    if [ -n "$OMP_SERVED_MODEL" ]; then printf 'true'; else printf 'false'; fi
+    return 0
+  fi
   case "$1" in
-    claude) if [ "$PEER_TRANSPORT" = "omp" ]; then printf 'false'; else printf 'true'; fi ;;
+    claude) printf 'true' ;;
     *) printf 'false' ;;
   esac
 }
@@ -1100,15 +1104,20 @@ parse_opencode_events() {  # <logfile> <outfile>
 }
 
 # omp --mode json streams NDJSON events; the final agent_end event carries every
-# message, and the last assistant message holds the answer, stopReason, and usage.
-# Records usage (tokens, cost) in PEER_USAGE and out.log whether or not the turn
-# succeeded, so a failed peer still reports what it spent.
+# message, and the last assistant message holds the answer, stopReason, usage,
+# and upstreamModel (the model the server says served the turn).
+# Records usage (tokens, cost) in PEER_USAGE and out.log, and the served model in
+# OMP_SERVED_MODEL, whether or not the turn succeeded, so a failed peer still
+# reports what it spent and which model spent it.
+OMP_SERVED_MODEL=""
 parse_omp_events() {   # <logfile> <outfile>
   local msg stop text tmp st
+  OMP_SERVED_MODEL=""
   msg="$(jq -cs '[.[] | select(.type=="agent_end") | .messages[]? | select(.role=="assistant")] | last // empty' "$1" 2>/dev/null)" || msg=""
   [ -n "$msg" ] || return 1
   PEER_USAGE="$(printf '%s' "$msg" | jq -c '.usage | select(type=="object") | {input, output, cacheRead, cacheWrite, totalTokens, cost: (.cost.total // null)}' 2>/dev/null)" || PEER_USAGE=""
   [ -n "$PEER_USAGE" ] && log "peer usage: $(printf '%s' "$PEER_USAGE" | jq -r '"tokens=\(.totalTokens) (input \(.input), output \(.output), cache read \(.cacheRead), cache write \(.cacheWrite)) cost=$\(.cost)"' 2>/dev/null)"
+  OMP_SERVED_MODEL="$(printf '%s' "$msg" | jq -r '.upstreamModel // "" | strings' 2>/dev/null)" || OMP_SERVED_MODEL=""
   stop="$(printf '%s' "$msg" | jq -r '.stopReason // ""' 2>/dev/null)"
   case "$stop" in
     stop|end_turn|"") ;;
@@ -1123,6 +1132,27 @@ parse_omp_events() {   # <logfile> <outfile>
   st=$?
   rm -f "$tmp"
   return "$st"
+}
+
+# Served-model receipt for the omp route. omp's own `model` field echoes the id
+# omp resolved (which can already differ from the request), so only the
+# server-reported upstreamModel counts. Same match rule as the receipt kernel:
+# the served id equals the requested id or continues it with "-" (dated
+# snapshot); anything else is a mismatch recorded as the served id. No receipt
+# -> "unverified", never a fallback to the requested value.
+omp_model_receipt() {   # <route>; sets MODEL_ACTUAL from OMP_SERVED_MODEL
+  local requested
+  requested="$(route_model "$1")"
+  MODEL_ACTUAL="unverified"
+  if [ -z "$OMP_SERVED_MODEL" ]; then
+    log "WARNING: omp reported no served model for requested $requested; model_actual=unverified (omp build lacks the provider's served-model receipt)"
+    return 0
+  fi
+  MODEL_ACTUAL="$OMP_SERVED_MODEL"
+  case "$OMP_SERVED_MODEL" in
+    "$requested"|"$requested"-*) log "served model: $OMP_SERVED_MODEL (requested $requested)" ;;
+    *) log "WARNING: model mismatch - requested $requested, backend served $OMP_SERVED_MODEL; reconcile must surface this" ;;
+  esac
 }
 
 attempt_route() {
@@ -1146,9 +1176,9 @@ attempt_route() {
     compose_prompt_embedded
     run_timeout_cmd "$PROMPT_FILE" "$attempt_hard" idle
     classify_route_output
-    # Usage is recorded even when the turn failed; the served-model receipt stays unverified.
+    # Usage and the served-model receipt are recorded even when the turn failed.
     parse_omp_events "$PEERLOG" "$RAW_OUT" || RUN_SUCCEEDED=false
-    MODEL_ACTUAL="unverified"
+    omp_model_receipt "$route"
     [ "$RUN_SUCCEEDED" = true ] || rm -f "$RAW_OUT"
     return 0
   fi
