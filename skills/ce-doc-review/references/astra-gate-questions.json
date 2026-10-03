@@ -1,0 +1,12 @@
+{
+  "auth_security": {"type": "noul", "instructions": "Does the plan in `plan` build or change authentication, authorization, secrets, encryption, or other security-sensitive behavior?"},
+  "payments": {"type": "noul", "instructions": "Does the plan in `plan` build or change payments, billing, or money flows?"},
+  "data_migration": {"type": "noul", "instructions": "Does the plan in `plan` migrate, backfill, or change the shape of stored data that already exists?"},
+  "external_api": {"type": "noul", "instructions": "Does the plan in `plan` call or expose an external API, network service, or third-party integration?"},
+  "privacy": {"type": "noul", "instructions": "Does the plan in `plan` collect, store, or send personal data about people?"},
+  "multi_surface": {"type": "noul", "instructions": "Must the plan in `plan` keep behavior the same across several runtimes, clients, or interfaces?"},
+  "depth": {"type": "choice", "instructions": "How large and risky is the implementation work the plan in `plan` describes?", "criteria": {
+    "lightweight": "Small, well-bounded, low ambiguity; usually 2-4 implementation units",
+    "standard": "Moderate complexity with some technical decisions; usually 3-6 units",
+    "deep": "Cross-cutting, high-risk, or strategically important; usually 4-8 units or phased delivery"}}
+}
