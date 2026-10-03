@@ -22,4 +22,4 @@ Honor the shared confidence rubric and false-positive catalog in the `<output-co
 
 ## Output
 
-Return one JSON object matching the findings schema. Synthesis merges your findings as those of an independent reviewer named `whole-doc-<provider>`. When one of your findings agrees with an in-process reviewer's finding (judged by whether one fix would resolve both), that agreement is a cross-model corroboration signal and promotes the finding. Your findings only corroborate and widen coverage; they never carry apply authority (`safe_auto`).
+Return one JSON object matching the findings schema. Synthesis merges your findings as those of an independent reviewer named `whole-doc-<provider>` (plus a model suffix when several models review the same document). When one of your findings agrees with an in-process reviewer's finding (judged by whether one fix would resolve both), that agreement is a cross-model corroboration signal and promotes the finding. Your findings only corroborate and widen coverage; they never carry apply authority (`safe_auto`).

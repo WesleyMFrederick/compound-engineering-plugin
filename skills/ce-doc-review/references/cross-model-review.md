@@ -1,6 +1,6 @@
 # Cross-Model Judgment Pass
 
-Runs ce-doc-review's **conditional judgment lenses** through one separately routed model target in read-only, least-privilege processes. Each peer gets the **same** persona brief the in-process reviewer uses, returns the same `findings-schema.json` shape, and folds into synthesis as reviewer `<reviewer-name>-<provider>`. It counts as independent corroboration and can promote agreement only when its result file records `independence_verified: true`; otherwise it remains attributed review evidence without a promotion bonus.
+Runs ce-doc-review's **conditional judgment lenses** through one separately routed model target in read-only, least-privilege processes. Each peer gets the **same** persona brief the in-process reviewer uses, returns the same `findings-schema.json` shape, and folds into synthesis as reviewer `<reviewer-name>-<provider>`, or `<reviewer-name>-<provider>-<model>` when the host pinned the model (the codex lineup in Step 2 always does: `adversarial-codex-luna`, `adversarial-codex-sol`, `adversarial-codex-astra`). It counts as independent corroboration and can promote agreement only when its result file records `independence_verified: true`; otherwise it remains attributed review evidence without a promotion bonus.
 
 The trio is the three **conditional** judgment lenses whose output diverges most across model families: `adversarial-document-reviewer`, `product-lens-reviewer`, `security-lens-reviewer`. The convergent lenses (`coherence`, `scope-guardian`) and the always-on `feasibility` lens do **not** run cross-model. Feasibility is excluded specifically so the pass stays conditional and does not spawn on every review.
 
@@ -71,7 +71,24 @@ Preferred model mappings run first. Only after the preferred ID is observed unav
 
 All activated lenses run on **one model per provider at high reasoning, except Codex and native Grok on extra-high**. The cursor-agent Grok route uses its model-implied extra-high tier; composer's `-fast` tier is its ceiling, an accepted exception. The concrete model IDs and per-route reasoning flags live in a **single mapping in the script** (`scripts/cross-model-doc-review.sh`, the `M_CODEX`/`M_CLAUDE`/`M_GROK`/`M_GROK_CURSOR`/`M_COMPOSER` constants and the `adapter_argv` builder). A checkout may pin the resolved target's model and effort through `cross_model_model` / `cross_model_effort` (Step 1); the script validates and never substitutes. This reference deliberately does **not** restate the IDs; one source of truth prevents the reference and script from drifting. The IDs are the current choice under the tier rule (a single maintenance point), not the contract.
 
-The **persona file** basename and the **reviewer name** are distinct: the script reads the brief from `references/personas/<persona-file>.md` but forces the fold-in `reviewer` field to `<reviewer-name>-<provider>` so agreement matches the in-process persona's short name. The script derives the persona file from the allowlisted reviewer name. It is **not** a caller argument, so no caller value reaches the brief-read path.
+The codex target is the one exception to one model per provider: by default it runs a model lineup, chosen per review by the Astra gate below.
+
+The **persona file** basename and the **reviewer name** are distinct: the script reads the brief from `references/personas/<persona-file>.md` but forces the fold-in `reviewer` field to the peer label — `<reviewer-name>-<provider>`, plus `-<model>` when `CROSS_MODEL_MODEL_OVERRIDE` pins this target's model — so agreement matches the in-process persona's short name and two models on one target never overwrite each other. The script derives the persona file from the allowlisted reviewer name. It is **not** a caller argument, so no caller value reaches the brief-read path.
+
+### Codex model lineup and the Astra gate
+
+When the resolved target is `codex` and neither the user nor `cross_model_model` named a model, every activated lens **and** the whole-doc sweep run once per lineup model, all at extra-high reasoning: `gpt-6-luna` and `gpt-6-sol`, plus `gpt-6-astra` when the Astra gate says so. A model the user or the checkout named runs alone, with no lineup and no gate. Other targets run one model.
+
+The gate runs once per review, after the Step 3 announce and before the first `start`. It sends the **full document** to TypeSafe System One (`api.typesafe.ai`, model `jev-latest`, `TYPESAFE_API_KEY`), so name TypeSafe as a recipient in the announce; when `CROSS_MODEL_PEERS` is set and does not list `typesafe`, run it with `CROSS_MODEL_ASTRA=off` so no call is made. The script asks the questions in `references/astra-gate-questions.json` and decides in code: Astra joins when `auth_security`, `payments`, or `privacy` is at least 0.7, or when `depth` is `deep` and at least two of the six risk questions are at least 0.7. `CROSS_MODEL_ASTRA=on|off` beats the gate. A missing key, failed call, or malformed answer is recorded and the lineup stays Luna + Sol.
+
+```bash
+SKILL_DIR="<absolute path of the directory containing the ce-doc-review SKILL.md you read>";
+PY="$(for c in python3 python py; do command -v "$c" >/dev/null 2>&1 && "$c" -c '' >/dev/null 2>&1 && { echo "$c"; break; }; done)"; [ -n "$PY" ] || { echo "no working Python 3 interpreter on PATH" >&2; exit 1; };
+RUN_DIR="<absolute EVIDENCE_DIR from references/dispatch.md>";
+"$PY" "$SKILL_DIR/scripts/astra-gate.py" --plan "<full document path>" --out "$RUN_DIR/astra-gate.json" && jq -r '.lineup[]' "$RUN_DIR/astra-gate.json"
+```
+
+`astra-gate.json` keeps the raw answers, token usage, cost, the gate's decision, the override, and the final `lineup`. Report its stdout line (`astra-gate: astra=<yes|no> reason=...`) in the review output, including any error it names. Launch each lineup model as its own job (Step 4).
 
 ## Step 3 — Announce
 
@@ -90,7 +107,7 @@ Each call is a CLI shell-out, not a subagent. Resolve one target and one fixed r
 **Two modes — slice the trio, sweep the whole doc (R20, KTD6):**
 
 - **Trio peers, sliced.** On **unified artifacts**, pass each activated trio lens the *same reviewer-specific slice its in-process twin got* as `<document-path>` (write that slice to `$EVIDENCE_DIR/slice-<reviewer-name>.md` — e.g. product-lens/adversarial get the Product Contract), not the full document, so the peer is a true corroborating twin rather than an off-lens reviewer. On legacy docs the peer gets the same full document the twin does.
-- **One whole-doc sweep.** In the **same wave**, also launch **one** call with reviewer-name **`whole-doc`**, the **full** document (never sliced), and the same resolved provider — a broad different-model read of the entire doc. It runs **once per document** (not per lens), writes `whole-doc-<provider>.json`, and folds in as an independent reviewer that corroborates against *any* in-process finding 3.3 merged it with (it has no in-process twin). Same gate, isolation, and non-blocking rules as the trio calls. A model following this contract MUST issue this `whole-doc` invocation whenever the pass runs, or the broad coverage the sweep exists to provide is silently skipped.
+- **One whole-doc sweep.** In the **same wave**, also launch **one** call with reviewer-name **`whole-doc`**, the **full** document (never sliced), and the same resolved provider — a broad different-model read of the entire doc. It runs **once per document and lineup model** (not per lens), writes `whole-doc-<provider>.json` (`whole-doc-codex-<model>.json` for a lineup model), and folds in as an independent reviewer that corroborates against *any* in-process finding 3.3 merged it with (it has no in-process twin). Same gate, isolation, and non-blocking rules as the trio calls. A model following this contract MUST issue this `whole-doc` invocation whenever the pass runs, or the broad coverage the sweep exists to provide is silently skipped.
 
 Invoke via the skill-dir anchor — set `SKILL_DIR` to the absolute directory of **this** skill's `SKILL.md` (the Bash tool's CWD is the user's project, not the skill dir, on every host; shell state does not persist between Bash calls, so set it inline in every runner call):
 
@@ -128,19 +145,23 @@ CE_PEER_JOBS_ROOT="$RUN_DIR" CE_PEER_HARD_SECS= CROSS_MODEL_HOST_HARNESS="<host-
 
 When Step 1 resolved a configured model or effort, add `CROSS_MODEL_MODEL_OVERRIDE_TARGET="<target>" CROSS_MODEL_MODEL_OVERRIDE="<model>"` and/or `CROSS_MODEL_EFFORT_OVERRIDE="<effort>"` to the `env` prefix after `CROSS_MODEL_FIXED_ROUTE`; omit them when unset.
 
+For the codex lineup (Step 2), issue one `start` per lens per lineup model, with `CROSS_MODEL_MODEL_OVERRIDE_TARGET="codex" CROSS_MODEL_MODEL_OVERRIDE="<lineup-model>"` in the `env` prefix and `--label "<reviewer-name>-<model-short>"` (`luna`, `sol`, `astra`), so each job and fold-in file is distinct.
+
+Every call also carries the review round and the decisions the in-process twin sees, in the `env` prefix: `CROSS_MODEL_REVIEW_ROUND="<n>"` (default 1); on round 2+, `CROSS_MODEL_PRIOR_DECISIONS_FILE="$RUN_DIR/peer-prior-decisions.md"` holding the `{decision_primer}` block rendered per `references/decision-primer.md` (the script skips a round 2+ call without it); and, when `{settled_ktds}` is not `none`, `CROSS_MODEL_SETTLED_DECISIONS_FILE="$RUN_DIR/peer-settled-decisions.md"` holding that slot's text. Write both files once before the first `start`.
+
 The nested windows are one budget with one knob, `CROSS_MODEL_HARD_SECS`. The runner derives its supervisor hard window from that ambient knob automatically (`max(1230, knob + 30)`). Clear `CE_PEER_HARD_SECS` on the start prefix (`CE_PEER_HARD_SECS=`) so a stale ambient value from an earlier session or harness export cannot undercut that derivation. An explicit numeric `CE_PEER_HARD_SECS` still wins when a skill deliberately sets one (ce-work / elevation), which this path must not do. Print the orchestrator deadline as `knob + 10` in the same shell as `start` (as above) and use that printed `peer-deadline-secs=<n>` below (all legs share the one value; re-use the first leg's number rather than re-deriving per leg); never hardcode it, because a literal survives a knob change and then reaps a healthy peer.
 
 **Do not forward `CROSS_MODEL_HARD_SECS` to the worker.** The runner already passes the ambient environment through, so a knob the user actually set reaches the worker on its own. Re-exporting the orchestrator's *resolved* value would turn a fallback into an explicit override and destroy the one distinction the worker still needs: idle-guarded routes (codex + streaming claude/cursor-family) use the raised `HARD_SECS` default, while `grok-cli` keeps the lower `UNGUARDED_HARD_SECS` bound because its `--json-schema` path cannot stream. Forcing one value would silently restore the doubled hang on that hard-only route.
 
-Omit `--result-path`; `done` means only that the worker exited. The fixed target determines the expected `<reviewer-name>-<target>.json` filename.
+Omit `--result-path`; `done` means only that the worker exited. The fixed target determines the expected `<reviewer-name>-<target>.json` filename (`<reviewer-name>-<target>-<model-short>.json` for a pinned model).
 
 - `<host-serving-family>` is `codex`, `claude`, `grok`, `composer`, or `unknown`; `<host-harness>` is `codex`, `claude`, `grok`, `cursor`, or `unknown`.
 - `<target>` is exactly one of `codex`, `claude`, `grok`, `cursor`, `composer`, or `opencode`; `<fixed-route>` is its already-sanctioned concrete route token from the Step 1 table (`codex`, `claude`, `grok-cli`, `grok-cursor`, `cursor`, `composer`, or `opencode`).
-- `<reviewer-name>` = the activated lens (`security-lens`, `adversarial`, or `product-lens`). The script derives the persona-brief filename and (per provider) model from this allowlisted value — the brief path is never caller-controlled.
+- `<reviewer-name>` = the activated lens (`security-lens`, `adversarial`, or `product-lens`), or `whole-doc`. The script derives the persona-brief filename and (per provider) model from this allowlisted value — the brief path is never caller-controlled.
 - `<document-path>` = the document under review.
 - `<document-type>` = the Phase 1 classification (`requirements` / `plan` / `unified-requirements` / `unified-plan`).
 - `<origin>` = the same `{origin_path}` slot the in-process personas receive.
-- `<run-dir>` = the absolute `$RUN_DIR` resolved above. The script writes `<reviewer-name>-<provider>.json` there per resolved peer **only after** forcing `reviewer` to `<reviewer-name>-<provider>` and downgrading peer `safe_auto` → `gated_auto`.
+- `<run-dir>` = the absolute `$RUN_DIR` resolved above. The script writes `<reviewer-name>-<provider>[-<model-short>].json` there per resolved peer **only after** forcing `reviewer` to that label and downgrading peer `safe_auto` → `gated_auto`. It also keeps the exact prompt it sent as `prompt-<label>.md`; omp routes send the persona brief, output contract, and schema as the system prompt, kept as `prompt-<label>.system.md`, and the review context and document on stdin.
 
 Every runner call is bounded: no tool call ever spans a worker's runtime, on any host. Between dispatch waves, poll outstanding jobs (it returns early when the watched jobs settle):
 
@@ -154,7 +175,7 @@ Capture the epoch time right after the final `start` (`date +%s`). That timestam
 
 Any started job whose terminal state is not `done` (`failed` / `timeout` / `died-without-result`), or that is `done` but leaves no fold-in artifact, is reported twice. First, as soon as you classify it under Step 5, tell the user in one line, naming the lens, the reason read from its `out.log`, and that the in-process reviewers continue without it (e.g. "Cross-model security-lens peer failed: codex returned HTTP 400, model not supported; continuing with in-process reviewers only."); in non-interactive mode, list it under the result's `Failed reviewers` section instead. Second, name it in the Coverage line with its lens and terminal state (e.g. "cross-model security-lens peer: timeout"). A job reaped at the deadline records `timeout`, with the reap noted in its reason. A preflight failure never yields a job id: a genuine condition-not-met skip is the silent `never-started` case, but a dispatch-infrastructure crash before any job starts is not a clean skip and triggers the hand-recovery rule in Step 5. Silent absence remains correct only for passes that were never started (condition not met / skip). A missing fold-in file is still "the pass didn't run for that lens," never a review failure, except when a dispatch-infrastructure crash voided the whole pass at once, which Step 5 handles as named whole-pass loss (the whole-doc broad read especially), not per-lens "not run."
 
-The cross-model pass does **not** receive the accumulated decision primer that in-process personas get on round 2+; the peer prompt carries a round-1 framing regardless of round. This is deliberate (cross-model is most valuable on the first pass). Synthesis's own R29/R30 suppression catches re-raised or already-resolved findings, so a peer that re-raises a prior-round-rejected finding is dropped at synthesis, not shown.
+The peer gets the same `Settled decisions:` slot and `<prior-decisions>` block as its in-process twin, from the env files above, so on round 2+ it honors the user's earlier decisions instead of re-raising them. Synthesis's own R29/R30 suppression still drops anything re-raised.
 
 ## Step 5 — Collect outcomes and clean up
 
@@ -167,6 +188,8 @@ Every started job must be collected and classified before return. Fold usable fi
   PY="$(for c in python3 python py; do command -v "$c" >/dev/null 2>&1 && "$c" -c '' >/dev/null 2>&1 && { echo "$c"; break; }; done)"; [ -n "$PY" ] || { echo "no working Python 3 interpreter on PATH" >&2; exit 1; };
   CE_PEER_JOBS_ROOT="<run-dir>" "$PY" "$SKILL_DIR/scripts/peer-job-runner.py" result "<job-id>" --path <run-dir>/<reviewer-name>-<target>.json
   ```
+
+  For a pinned model, the path is `<run-dir>/<reviewer-name>-<target>-<model-short>.json`.
 
   The read checks file ownership and is bounded. Exit 0 emits the artifact. Exit 2 means the job is still running, so the deadline loop above was left early; return to it rather than classifying. Exit 3 is the only outcome that means the peer produced nothing; it names that lens's job state, which selects the matching branch below. Any other exit means the runner could not complete the read: a trust failure on the artifact or on the job's own state, or a job id that did not resolve. None of those has a branch below: name the failure in Coverage as a degraded cross-model pass, and never fold it into the silent skip. If present, treat it as one reviewer return
 - **No file, clean skip** (script skipped before starting real work: host un-attestable, no different-provider route installed, CLI missing, or lens not activated) → the pass simply didn't run for that lens. Note "cross-model pass: not run" in Coverage on an interactive host in default mode, or "cross-model pass: disabled by checkout config" when Step 1's egress policy was the reason; stay silent in non-interactive mode. Never fail the review. Ignore any `*.raw.json` leftovers; they are not fold-in artifacts.

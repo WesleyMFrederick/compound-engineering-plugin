@@ -58,7 +58,7 @@ When findings merge:
 
 **Merging never drops.** A merge regroups findings; it never removes one from the review. Every finding that survives the lead agent's review reaches the user, either as its own entry or inside the merged finding that carries its concern. Rejected claims are recorded internally, not lost through merging.
 
-**Cross-model returns.** A `<reviewer-name>-<provider>` return merges with its in-process twin under the same one-fix test. Whether that merge counts as *independent corroboration* is decided in 3.4 (Cross-Persona Agreement Promotion) by the return's `independence_verified` flag, not here.
+**Cross-model returns.** A `<reviewer-name>-<provider>` return merges with its in-process twin under the same one-fix test. A codex lineup returns one artifact per model (`<reviewer-name>-codex-luna`, `-codex-sol`, `-codex-astra`, and `whole-doc-codex-<model>`); dedupe across them under the same test, so one problem that several models raise is one finding that keeps every model as a contributor. Whether that merge counts as *independent corroboration* is decided in 3.4 (Cross-Persona Agreement Promotion) by the return's `independence_verified` flag, not here.
 
 **The merged set is the record.** The merged finding set produced by this step is the single source of truth for both Coverage counts and rendered output. Each finding appears in exactly one place in the output — counted once in its route bucket, rendered once at its own position.
 
@@ -66,7 +66,7 @@ When findings merge:
 
 Agreement can strengthen the evidence but does not make an issue important. Raise confidence by at most **one anchor step** only when the combined evidence meets the next level's definition. Several reviewers noticing a nit does not make it worth fixing. A significant defect needs no second vote to be retained.
 
-For local personas, independence requires separate dispatched contexts; an inline fallback cannot trigger anchor promotion. Cross-model corroboration requires `independence_verified: true`, at least one in-process contributor, and an independence-verified peer. A missing or false flag cannot trigger anchor promotion. Cursor default/Auto is not verified independence unless the run recorded which model actually answered. Peer-only agreement never promotes, and additional peers never stack the promotion.
+For local personas, independence requires separate dispatched contexts; an inline fallback cannot trigger anchor promotion. Cross-model corroboration requires `independence_verified: true`, at least one in-process contributor, and an independence-verified peer. A missing or false flag cannot trigger anchor promotion. Cursor default/Auto is not verified independence unless the run recorded which model actually answered. Peer-only agreement never promotes, and additional peers never stack the promotion: models on one target (the codex lineup) count as one cross-model corroboration, however many of them agree.
 
 Record any justified promotion in the Reviewer column as `(+1 anchor)`, naming the cross-model reviewer and its verified model or route legibly. Keep the stored reviewer identities. Findings dropped at anchors 0/25 do not return through agreement. Corroboration never grants permission to apply fixes: the limits on peer-only findings in 3.6 (Resolve Who Can Choose the Fix) and 3.7 (Route by Autofix Class) still apply.
 

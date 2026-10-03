@@ -1197,7 +1197,8 @@ describe("cross-model-doc-review normalization (R18, KTD5)", () => {
     const runDir = makeRunDir()
     const r = run(["codex", "claude", "adversarial", doc, "plan", "none", runDir], runDir, env)
     expect(r.code).toBe(0)
-    expect(r.files).toHaveLength(0)
+    // The saved prompt stays as evidence; no fold-in artifact is published.
+    expect(r.files.filter((f) => !f.startsWith("prompt-"))).toHaveLength(0)
   })
 
   test("downgrades a peer safe_auto finding to gated_auto (R18), preserving other fields", () => {
@@ -1344,7 +1345,7 @@ describe("cross-model-doc-review normalization (R18, KTD5)", () => {
       CROSS_MODEL_MODEL_OVERRIDE_TARGET: "composer",
       CROSS_MODEL_MODEL_OVERRIDE: "composer-next-fast",
     })
-    const out = JSON.parse(readFileSync(path.join(runDir, "adversarial-composer.json"), "utf8"))
+    const out = JSON.parse(readFileSync(path.join(runDir, "adversarial-composer-next-fast.json"), "utf8"))
     expect(out.model_actual).toBe("unverified")
     expect(out.serving_family).toBe("unknown")
     expect(out.independence_verified).toBe(false)
@@ -1602,7 +1603,7 @@ describe("cross-model-doc-review omp transport", () => {
     cost: { input: 0.0001866, output: 0.0000045, cacheRead: 0, cacheWrite: 0, total: 0.0001911 },
   }
 
-  function runOmp(installed: string[], assistant: Record<string, unknown>) {
+  function runOmp(installed: string[], assistant: Record<string, unknown>, extraEnv: Record<string, string> = {}) {
     const { env } = sandbox(installed, OMP_STUB)
     const cap = mkTempRoot("xmodel-omp-cap-")
     const doc = makeDoc("# Plan\nUNIQUE_OMP_DOC_MARKER\n")
@@ -1612,6 +1613,7 @@ describe("cross-model-doc-review omp transport", () => {
       ARGV_CAPTURE: path.join(cap, "argv"),
       PROMPT_CAPTURE: path.join(cap, "stdin"),
       OMP_EVENTS: ompEvents(assistant),
+      ...extraEnv,
     })
     const argvFile = path.join(cap, "argv")
     return {
@@ -1692,4 +1694,161 @@ describe("cross-model-doc-review omp transport", () => {
     expect(out.cross_model_harness).toBe("codex")
     expect(out.usage).toBeNull()
   }, 20_000)
+})
+
+describe("cross-model-doc-review per-model peers and saved prompts", () => {
+  const OMP_STUB =
+    `#!/bin/sh\nprintf '%s\\n' "$@" > "$ARGV_CAPTURE"\ncat > "$PROMPT_CAPTURE"\ncat "$OMP_EVENTS"\n`
+  const FINDINGS = '{"reviewer":"adversarial","findings":[]}'
+
+  function ompEvents(): string {
+    const file = path.join(mkTempRoot("xmodel-omp-events-"), "events.jsonl")
+    const assistant = { role: "assistant", content: [{ type: "text", text: FINDINGS }], stopReason: "stop" }
+    const lines = [{ type: "agent_end", isTerminal: true, messages: [assistant] }]
+    writeFileSync(file, lines.map((l) => JSON.stringify(l)).join("\n") + "\n")
+    return file
+  }
+
+  function runPeer(extraEnv: Record<string, string> = {}, installed = ["omp"]) {
+    const stub = installed.includes("omp")
+      ? OMP_STUB
+      : `#!/bin/sh\ncat > "$PROMPT_CAPTURE"\nprintf '%s' '${FINDINGS}'\n`
+    const { env } = sandbox(installed, stub)
+    const cap = mkTempRoot("xmodel-peer-cap-")
+    const doc = makeDoc("# Plan\nUNIQUE_PEER_DOC_MARKER\n")
+    const runDir = makeRunDir()
+    const r = run(["claude", "codex", "adversarial", doc, "plan", "none", runDir], runDir, {
+      ...env,
+      ARGV_CAPTURE: path.join(cap, "argv"),
+      PROMPT_CAPTURE: path.join(cap, "stdin"),
+      OMP_EVENTS: ompEvents(),
+      ...extraEnv,
+    })
+    const argvFile = path.join(cap, "argv")
+    const stdinFile = path.join(cap, "stdin")
+    return {
+      r,
+      runDir,
+      argv: existsSync(argvFile) ? readFileSync(argvFile, "utf8").trim().split("\n") : [],
+      stdin: existsSync(stdinFile) ? readFileSync(stdinFile, "utf8") : "",
+    }
+  }
+
+  const SOL = { CROSS_MODEL_MODEL_OVERRIDE_TARGET: "codex", CROSS_MODEL_MODEL_OVERRIDE: "gpt-6-sol" }
+
+  test("Given a pinned codex model, When the peer runs, Then that model is requested and its fold-in is named for it", () => {
+    // Given the host pins gpt-6-sol for the codex target
+    // When the adversarial lens runs
+    const { r, runDir, argv } = runPeer(SOL)
+    // Then omp requests sol and the fold-in carries the per-model name
+    expect(argv[argv.indexOf("--model") + 1]).toBe("openai-codex/gpt-6-sol")
+    expect(r.files).toContain("adversarial-codex-sol.json")
+    expect(r.files).not.toContain("adversarial-codex.json")
+    const out = JSON.parse(readFileSync(path.join(runDir, "adversarial-codex-sol.json"), "utf8"))
+    expect(out.reviewer).toBe("adversarial-codex-sol")
+    expect(out.model_requested).toBe("gpt-6-sol")
+  }, 20_000)
+
+  test("Given luna and sol runs into one folder, When both finish, Then neither fold-in overwrites the other", () => {
+    // Given one run folder shared by two codex models
+    const { env } = sandbox(["omp"], OMP_STUB)
+    const cap = mkTempRoot("xmodel-peer-cap-")
+    const doc = makeDoc()
+    const runDir = makeRunDir()
+    const base = { ...env, ARGV_CAPTURE: path.join(cap, "argv"), PROMPT_CAPTURE: path.join(cap, "stdin"), OMP_EVENTS: ompEvents() }
+    // When luna and then sol run
+    for (const model of ["gpt-6-luna", "gpt-6-sol"]) {
+      run(["claude", "codex", "adversarial", doc, "plan", "none", runDir], runDir, {
+        ...base, CROSS_MODEL_MODEL_OVERRIDE_TARGET: "codex", CROSS_MODEL_MODEL_OVERRIDE: model,
+      })
+    }
+    // Then both artifacts and both saved prompts are present
+    const files = readdirSync(runDir)
+    expect(files).toEqual(expect.arrayContaining([
+      "adversarial-codex-luna.json", "adversarial-codex-sol.json",
+      "prompt-adversarial-codex-luna.md", "prompt-adversarial-codex-sol.md",
+    ]))
+  }, 30_000)
+
+  test("Given an omp peer, When it runs, Then the brief goes to --system-prompt and only the review context goes on stdin, both saved exactly", () => {
+    // Given omp carries the codex route
+    // When the peer runs
+    const { runDir, argv, stdin } = runPeer(SOL)
+    // Then the brief is a system-prompt file and the review context is stdin
+    const systemArg = argv[argv.indexOf("--system-prompt") + 1]
+    expect(argv).toContain("--system-prompt")
+    expect(systemArg.includes("\n")).toBe(false)
+    const savedSystem = readFileSync(path.join(runDir, "prompt-adversarial-codex-sol.system.md"), "utf8")
+    const savedUser = readFileSync(path.join(runDir, "prompt-adversarial-codex-sol.md"), "utf8")
+    expect(savedUser).toBe(stdin)
+    expect(savedSystem).toContain("<output-contract>")
+    expect(savedSystem).toContain('"findings"')
+    expect(savedSystem).not.toContain("UNIQUE_PEER_DOC_MARKER")
+    expect(stdin).toContain("UNIQUE_PEER_DOC_MARKER")
+    expect(stdin).not.toContain("<output-contract>")
+    // And the template's literal placeholder is never sent
+    expect(savedSystem).not.toContain("{schema}")
+  }, 20_000)
+
+  test("Given a native route, When it runs, Then one combined prompt is sent on stdin and saved exactly", () => {
+    // Given only the codex CLI installed
+    // When the peer runs
+    const { r, runDir, stdin } = runPeer({}, ["codex"])
+    // Then the saved prompt is the full brief plus context, with no system-prompt file
+    expect(r.stderr).toContain("via=native codex CLI")
+    const saved = readFileSync(path.join(runDir, "prompt-adversarial-codex.md"), "utf8")
+    expect(saved).toBe(stdin)
+    expect(saved).toContain("<output-contract>")
+    expect(saved).toContain("UNIQUE_PEER_DOC_MARKER")
+    expect(saved).not.toContain("{schema}")
+    expect(r.files).not.toContain("prompt-adversarial-codex.system.md")
+  }, 20_000)
+
+  test("Given no round inputs, When the peer runs, Then it gets round-1 framing and Settled decisions: none", () => {
+    // Given defaults
+    // When the peer runs
+    const { stdin } = runPeer(SOL)
+    // Then the slots match the in-process round-1 twin
+    expect(stdin).toContain("Settled decisions: none")
+    expect(stdin).toContain("<prior-decisions>\nRound 1 — no prior decisions.\n</prior-decisions>")
+    expect(stdin).toContain("<decision-primer-rules>")
+  }, 20_000)
+
+  test("Given round 2 with prior and settled decisions, When the peer runs, Then both reach the peer", () => {
+    // Given a rendered primer and the settled-decision list
+    const dir = mkTempRoot("xmodel-round-")
+    const prior = path.join(dir, "prior.md")
+    const settled = path.join(dir, "settled.md")
+    writeFileSync(prior, '<prior-decisions>\nRound 1 — rejected (1 entries):\n- Scope: "Drop cache" — Skipped because out of scope\n  Evidence: "cache"\n</prior-decisions>\n')
+    writeFileSync(settled, "Use SQLite (user-directed; rejected: Postgres)")
+    // When the round-2 peer runs
+    const { stdin, r } = runPeer({
+      ...SOL,
+      CROSS_MODEL_REVIEW_ROUND: "2",
+      CROSS_MODEL_PRIOR_DECISIONS_FILE: prior,
+      CROSS_MODEL_SETTLED_DECISIONS_FILE: settled,
+    })
+    // Then the peer sees the user's earlier decisions instead of round-1 framing
+    expect(stdin).toContain('"Drop cache" — Skipped because out of scope')
+    expect(stdin).not.toContain("Round 1 — no prior decisions.")
+    expect(stdin).toContain("Settled decisions: Use SQLite (user-directed; rejected: Postgres)")
+    expect(r.stderr).toContain("round=2")
+  }, 20_000)
+
+  test("Given round 2 without its primer, When the peer would run, Then nothing is sent", () => {
+    // Given round 2 and no prior-decisions file
+    // When the script runs
+    const { r, argv } = runPeer({ ...SOL, CROSS_MODEL_REVIEW_ROUND: "2" })
+    // Then the pass skips before egress rather than sending round-1 framing
+    expect(argv).toEqual([])
+    expect(r.files).toEqual([])
+    expect(r.stderr).toContain("round 2 needs CROSS_MODEL_PRIOR_DECISIONS_FILE")
+  }, 20_000)
+
+  test("Given the omp transport, When the adapter is printed, Then it carries the system-prompt file", () => {
+    // Given / When the codex omp adapter is emitted
+    const argv = emitAdapter("codex", {}).length ? spawnSync("bash", [SCRIPT, "--emit-adapter", "codex", "omp"], { encoding: "utf8" }).stdout : ""
+    // Then the brief file is passed as the system prompt
+    expect(argv).toContain("--system-prompt <system-prompt-file>")
+  })
 })

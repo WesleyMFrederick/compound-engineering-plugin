@@ -45,7 +45,21 @@
 #   <document-type> requirements | plan | unified-requirements | unified-plan
 #   <origin>        the Origin context slot (a path, product_contract_source:<v>,
 #                   or the literal token none)
-#   <run-dir>       an existing dir; output -> <run-dir>/<reviewer-name>-<provider>.json
+#   <run-dir>       an existing dir; output -> <run-dir>/<peer-label>.json, and the
+#                   exact prompt sent -> <run-dir>/prompt-<peer-label>.md (plus
+#                   prompt-<peer-label>.system.md on the omp transport, which
+#                   carries persona + output contract + schema as its system prompt)
+#
+#   <peer-label> is <reviewer-name>-<provider>, or <reviewer-name>-<provider>-<model>
+#   when CROSS_MODEL_MODEL_OVERRIDE_TARGET names this provider, so several models
+#   on one provider (e.g. codex luna + sol) fold in as separate reviewers:
+#   CROSS_MODEL_MODEL_OVERRIDE=gpt-6-sol -> adversarial-codex-sol.json.
+#
+# Review-context inputs (mirror the in-process reviewer's slots):
+#   CROSS_MODEL_REVIEW_ROUND            review round, default 1
+#   CROSS_MODEL_PRIOR_DECISIONS_FILE    rendered <prior-decisions> block; required
+#                                       from round 2 (references/decision-primer.md)
+#   CROSS_MODEL_SETTLED_DECISIONS_FILE  the Settled decisions slot text; unset = none
 #
 # Test/introspection mode (no model call, no side effects):
 #   cross-model-doc-review.sh --emit-adapter <route> [native|omp]
@@ -123,11 +137,28 @@ omp_model() {   # <route> -> omp model id: <omp provider>/<route model>
 peer_harness() {   # <route> -> harness that carried this run (route_harness stays byte-identical across scripts)
   if [ "$PEER_TRANSPORT" = "omp" ] && [ -n "$(omp_provider "$1")" ]; then printf 'omp'; else route_harness "$1"; fi
 }
-omp_argv() {   # <route>; tool-less, sessionless, no user extensions/skills/rules; prompt on stdin
+omp_argv() {   # <route>; tool-less, sessionless, no user extensions/skills/rules; brief as system prompt, context on stdin
   local thinking; thinking="$(route_effort "$1")"
   case "$thinking" in none) thinking=off ;; ultra) thinking=max ;; esac
   printf '%s\0' omp -p --no-session --mode json --model "$(omp_model "$1")" --thinking "$thinking" \
     --no-tools --no-extensions --no-skills --no-rules --no-lsp --no-title
+  # A single-line value is read as a file path (no ARG_MAX limit on the brief).
+  [ -z "${SYSTEM_PROMPT_FILE:-}" ] || printf '%s\0' --system-prompt "$SYSTEM_PROMPT_FILE"
+}
+
+peer_label() {   # <provider> -> fold-in reviewer name; adds the model when the host pinned this provider's model
+  # gpt-6-sol -> <reviewer>-codex-sol; composer-next-fast -> <reviewer>-composer-next-fast.
+  local model=""
+  if [ -n "${CROSS_MODEL_MODEL_OVERRIDE:-}" ] && [ "${CROSS_MODEL_MODEL_OVERRIDE_TARGET:-}" = "$1" ]; then
+    model="${CROSS_MODEL_MODEL_OVERRIDE##*/}"
+    model="${model#"$1"-}"
+    model="$(printf '%s' "$model" | sed -E 's/^openai\.//; s/^gpt-[0-9]+(\.[0-9]+)?-//; s/[^A-Za-z0-9.]+/-/g; s/^-+//; s/-+$//')"
+  fi
+  if [ -n "$model" ]; then
+    printf '%s-%s-%s' "$REVIEWER_NAME" "$1" "$model"
+  else
+    printf '%s-%s' "$REVIEWER_NAME" "$1"
+  fi
 }
 
 route_effort() {   # <route> -> requested effort: the override where the route takes one, else editorial
@@ -375,6 +406,7 @@ if [ "${1:-}" = "--emit-adapter" ]; then
   RAW_OUT="<peer-workdir>/<lens>-<provider>.raw.json"
   OUT="<run-dir>/<lens>-<provider>.json"
   PROMPT_FILE="<prompt-file>"; SCHEMA_REF="<schema>"
+  [ "${3:-native}" != "omp" ] || SYSTEM_PROMPT_FILE="<system-prompt-file>"
   route="${2:-}"
   case "${3:-native}" in
     native|omp) PEER_TRANSPORT="${3:-native}" ;;
@@ -459,8 +491,32 @@ CONTEXT_SLOT_RULES="$(awk '/<context-slots-rules>/{f=1} f; /<\/context-slots-rul
 # The isolated peer can't resolve that reference on its own, so embed it too --
 # otherwise the peer calibrates anchors / suppresses false positives differently from
 # its in-process twin, weakening the cross-model agreement signal (R13 parity).
-OUTPUT_CONTRACT_RULES="$(awk '/<output-contract>/{f=1} f; /<\/output-contract>/{if(f)exit}' "$TEMPLATE" 2>/dev/null)"
+# The schema is printed once after the contract, so the template's literal {schema}
+# placeholder line is dropped rather than sent to the peer as text.
+OUTPUT_CONTRACT_RULES="$(awk '/<output-contract>/{f=1} f && $0 != "{schema}"; /<\/output-contract>/{if(f)exit}' "$TEMPLATE" 2>/dev/null)"
 [ -n "$OUTPUT_CONTRACT_RULES" ] || log "output-contract not found in $TEMPLATE; peer prompt omits the shared confidence rubric / FP catalog (calibration may differ from the twin)"
+DECISION_PRIMER_RULES="$(awk '/<decision-primer-rules>/{f=1} f; /<\/decision-primer-rules>/{if(f)exit}' "$TEMPLATE" 2>/dev/null)"
+[ -n "$DECISION_PRIMER_RULES" ] || log "decision-primer rules not found in $TEMPLATE; peer prompt omits how to honor prior decisions"
+
+# Round, prior decisions, and settled decisions: the same slots the in-process
+# twin receives (references/dispatch.md). A round 2+ peer without its primer
+# would re-raise findings the user already rejected, so that gap skips the pass.
+REVIEW_ROUND="${CROSS_MODEL_REVIEW_ROUND:-1}"
+case "$REVIEW_ROUND" in ''|0*|*[!0-9]*) skip "CROSS_MODEL_REVIEW_ROUND must be a positive integer (got '$REVIEW_ROUND'); skipping" ;; esac
+if [ "$REVIEW_ROUND" -eq 1 ]; then
+  PRIOR_DECISIONS="$(printf '<prior-decisions>\nRound 1 — no prior decisions.\n</prior-decisions>')"
+else
+  _prior="${CROSS_MODEL_PRIOR_DECISIONS_FILE:-}"
+  [ -n "$_prior" ] && [ -f "$_prior" ] || skip "round $REVIEW_ROUND needs CROSS_MODEL_PRIOR_DECISIONS_FILE (the rendered <prior-decisions> block); skipping"
+  PRIOR_DECISIONS="$(cat "$_prior")"
+  case "$PRIOR_DECISIONS" in *"<prior-decisions>"*"</prior-decisions>"*) ;; *) skip "prior decisions file '$_prior' has no <prior-decisions> block; skipping" ;; esac
+fi
+SETTLED_DECISIONS="none"
+if [ -n "${CROSS_MODEL_SETTLED_DECISIONS_FILE:-}" ]; then
+  [ -f "$CROSS_MODEL_SETTLED_DECISIONS_FILE" ] || skip "settled decisions file '$CROSS_MODEL_SETTLED_DECISIONS_FILE' not readable; skipping"
+  SETTLED_DECISIONS="$(cat "$CROSS_MODEL_SETTLED_DECISIONS_FILE")"
+  [ -n "${SETTLED_DECISIONS//[[:space:]]/}" ] || skip "settled decisions file '$CROSS_MODEL_SETTLED_DECISIONS_FILE' is empty (write the literal none instead); skipping"
+fi
 
 # --- resolve which provider(s) to run (exclude host, allowlist, availability) --
 ALLOW="${CROSS_MODEL_PEERS:-}"                 # optional egress allowlist (R19)
@@ -557,13 +613,9 @@ if [ -n "${CROSS_MODEL_DRY_RUN:-}" ]; then
   exit 0
 fi
 
-# --- compose the peer prompt from the canonical persona (single source) ----
-# The full findings schema is embedded so the peer knows every required field.
-# The document content is embedded directly inside the <review-context> block,
-# with the same context slots the in-process persona adapts on. The reviewer
-# field is normalized to <reviewer-name>-<provider> after the run, so the prompt
-# asks only for the short name.
-PROMPT_FILE="$(mktemp "${TMPDIR:-/tmp}/xmodel-doc-prompt-XXXXXX")"
+# --- peer prompt: composed per provider in compose_prompts (run_provider) ----
+PROMPT_FILE=""
+SYSTEM_PROMPT_FILE=""
 PEERLOG="$(mktemp "${TMPDIR:-/tmp}/xmodel-doc-log-XXXXXX")"
 # Peer stderr goes to its own file, NOT merged into PEERLOG: PEERLOG must stay
 # clean stdout for the findings raw_decode scan and the receipt jq-parse. An
@@ -575,7 +627,8 @@ RAW_OUT=""
 RUN_SUCCEEDED=false
 PROVIDER_OUTCOME="ok"
 cleanup_temp() {
-  rm -f "$PROMPT_FILE" "$PEERLOG" "$PEERERR"
+  # The prompt files the peer read live in PEER_WORKDIR; the kept copies are in RUN_DIR.
+  rm -f "$PEERLOG" "$PEERERR"
   [ -n "$RAW_OUT" ] && rm -f "$RAW_OUT"
   [ -n "$PEER_WORKDIR" ] && [ "$PEER_WORKDIR" != "${RUN_DIR:-}" ] && rm -rf "$PEER_WORKDIR"
 }
@@ -583,7 +636,11 @@ trap 'cleanup_temp' EXIT
 # Basename only in the peer prompt: content is already embedded (KTD3). An absolute
 # path would give cursor-agent residual-Read a repo coordinate to walk from.
 DOC_BASENAME="$(basename "$DOC_PATH")"
-{
+
+# The brief: canonical persona (single source) + shared output contract + the full
+# findings schema. The reviewer field is normalized to the peer label after the
+# run, so the brief asks only for the short name.
+write_brief() {
   cat "$PERSONA"
   printf '\n\n---\n\n'
   # Shared output-contract (confidence rubric + FP catalog) the persona brief defers
@@ -593,16 +650,44 @@ DOC_BASENAME="$(basename "$DOC_PATH")"
   printf 'Return ONE JSON object and nothing else (no prose, no code fence) matching this schema:\n\n'
   printf '%s' "$SCHEMA_CONTENT"
   printf '\n\nSet the top-level "reviewer" field to "%s" (it will be namespaced to the peer provider on fold-in).\n' "$REVIEWER_NAME"
-  printf '\n<review-context>\n'
+}
+
+# The review context: the slots the in-process twin gets (subagent-template.md
+# <review-context>), the document, and the rules for reading those slots.
+write_review_context() {
+  printf '<review-context>\n'
   printf 'Document type: %s\n' "$DOC_TYPE"
   printf 'Document path: %s\n' "$DOC_BASENAME"
-  printf 'Origin: %s\n\n' "$ORIGIN"
-  printf '<prior-decisions>\nRound 1 — no prior decisions.\n</prior-decisions>\n\n'
+  printf 'Origin: %s\n' "$ORIGIN"
+  printf 'Settled decisions: %s\n\n' "$SETTLED_DECISIONS"
+  printf '%s\n\n' "$PRIOR_DECISIONS"
   printf 'Document content:\n'
   cat "$DOC_PATH"
   printf '\n</review-context>\n'
   [ -n "$CONTEXT_SLOT_RULES" ] && printf '\n%s\n' "$CONTEXT_SLOT_RULES"
-} > "$PROMPT_FILE"
+  [ -n "$DECISION_PRIMER_RULES" ] && printf '\n%s\n' "$DECISION_PRIMER_RULES"
+  return 0
+}
+
+# Write the prompt the peer reads into its private workspace, and keep an exact
+# copy in RUN_DIR as prompt-<label>.md. omp takes the brief as its system prompt
+# (prompt-<label>.system.md) and the review context on stdin; every other route
+# gets one combined prompt.
+compose_prompts() {   # <label>
+  local label="$1"
+  PROMPT_FILE="$PEER_WORKDIR/.peer-prompt-$label.md"
+  SYSTEM_PROMPT_FILE=""
+  if [ "$PEER_TRANSPORT" = "omp" ]; then
+    SYSTEM_PROMPT_FILE="$PEER_WORKDIR/.peer-prompt-$label.system.md"
+    write_brief > "$SYSTEM_PROMPT_FILE" || return 1
+    write_review_context > "$PROMPT_FILE" || return 1
+    cp "$SYSTEM_PROMPT_FILE" "$RUN_DIR/prompt-$label.system.md" || return 1
+  else
+    { write_brief; printf '\n'; write_review_context; } > "$PROMPT_FILE" || return 1
+    rm -f "$RUN_DIR/prompt-$label.system.md"
+  fi
+  cp "$PROMPT_FILE" "$RUN_DIR/prompt-$label.md"
+}
 
 # --- run machinery: idle-timeout for streaming peers, hard-only for grok-cli --
 # Idle cap must exceed the peer's worst-case silent turn: Codex --json is
@@ -1178,9 +1263,10 @@ route_hard_budget() {
 
 # Run one host-resolved provider through its fixed route.
 run_provider() {   # <provider>
-  local provider="$1" primary="" fixed="${CROSS_MODEL_FIXED_ROUTE:-}"
+  local provider="$1" primary="" fixed="${CROSS_MODEL_FIXED_ROUTE:-}" label
   local provider_budget provider_deadline remaining
-  OUT="$RUN_DIR/$REVIEWER_NAME-$provider.json"
+  label="$(peer_label "$provider")"
+  OUT="$RUN_DIR/$label.json"
   # Per-peer empty workspace, kept SEPARATE from the shared fold-in dir (RUN_DIR).
   # The peer's cwd/workspace and its RAW_OUT live here, so a read-capable peer
   # (codex/cursor-agent) can neither list a shared cwd nor read another lens's
@@ -1189,7 +1275,7 @@ run_provider() {   # <provider>
   # never written into RUN_DIR by the peer itself. Falls back to RUN_DIR only if
   # mktemp fails (preserves prior behavior over failing the pass).
   PEER_WORKDIR="$(mktemp -d "${TMPDIR:-/tmp}/xmodel-doc-peer-XXXXXX")" || PEER_WORKDIR="$RUN_DIR"
-  RAW_OUT="$PEER_WORKDIR/$REVIEWER_NAME-$provider.raw.json"
+  RAW_OUT="$PEER_WORKDIR/$label.raw.json"
   [ -n "$fixed" ] || { log "host must resolve one fixed route before egress; skipping"; rm -f "$OUT"; return 0; }
   [ "$(route_target "$fixed")" = "$provider" ] || { log "fixed route '$fixed' does not match target '$provider'; skipping"; rm -f "$OUT"; return 0; }
   if [ "$fixed" = "grok-cursor" ] && ! cursor_egress_ok; then
@@ -1203,6 +1289,8 @@ run_provider() {   # <provider>
   [ -n "$PY_BIN" ] || { log "working Python 3 interpreter required for peer outcome classification; skipping"; rm -f "$OUT"; return 0; }
   validate_model_override "$primary" || { log "model override '${CROSS_MODEL_MODEL_OVERRIDE:-}' not compatible with route '$primary'; skipping"; rm -f "$OUT"; return 0; }
   validate_effort_override "$primary" || { log "effort override '${CROSS_MODEL_EFFORT_OVERRIDE:-}' not compatible with route '$primary'; skipping"; rm -f "$OUT"; return 0; }
+  compose_prompts "$label" || { log "cannot write the peer prompt for $label; skipping"; rm -f "$OUT"; return 0; }
+  log "peer prompt saved: $RUN_DIR/prompt-$label.md${SYSTEM_PROMPT_FILE:+ (system prompt: $RUN_DIR/prompt-$label.system.md)} round=$REVIEW_ROUND"
   # Track the route that actually produced the fold-in, so the artifact records
   # whether a grok return went out directly (grok-cli -> xAI) or through Cursor
   # (grok-cursor -> Cursor also received the full document). The <lens>-<provider>
@@ -1254,7 +1342,7 @@ run_provider() {   # <provider>
     esac
     _independent=false
     [ "$HOST_PROVIDER" != "unknown" ] && [ "$_target_family" != "unknown" ] && [ "$HOST_PROVIDER" != "$_target_family" ] && _independent=true
-    if jq --arg r "$REVIEWER_NAME-$provider" --arg route "$ACTUAL_ROUTE" \
+    if jq --arg r "$label" --arg route "$ACTUAL_ROUTE" \
          --arg target "$provider" --arg harness "$(peer_harness "$ACTUAL_ROUTE")" \
          --arg family "$_target_family" --argjson independent "$_independent" \
          --arg mreq "$(route_model "$ACTUAL_ROUTE")" --arg mact "$MODEL_ACTUAL" \
@@ -1283,7 +1371,7 @@ run_provider() {   # <provider>
   fi
   if [ -s "$OUT" ] && jq -e '(.reviewer|type=="string") and (.findings|type=="array") and (.residual_risks|type=="array") and (.deferred_questions|type=="array")' "$OUT" >/dev/null 2>&1; then
     n="$(jq '.findings | length' "$OUT" 2>/dev/null || echo '?')"
-    log "wrote $n finding(s) to $OUT (reviewer $REVIEWER_NAME-$provider)"
+    log "wrote $n finding(s) to $OUT (reviewer $label)"
   else
     log "provider $provider produced no usable schema-shaped output; skipping fold-in"
     # Surface bounded peer output so the orchestrator can

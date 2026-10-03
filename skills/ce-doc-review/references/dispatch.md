@@ -62,6 +62,8 @@ Round 1 — no prior decisions.
 </prior-decisions>
 ```
 
+Cross-model peers get the same `{settled_ktds}` and `{decision_primer}` values through files the host writes before launch (`references/cross-model-review.md`, Step 4); their script saves its own prompts as `prompt-<reviewer-name>-<provider>[-<model>].md`.
+
 **Save as you go.** Write each reviewer's built prompt to `$EVIDENCE_DIR/prompt-<reviewer-name>.md` when you dispatch it, and its returned JSON, unedited, to `$EVIDENCE_DIR/findings-<reviewer-name>.json` when it returns, before synthesis reads it.
 
 **Error handling:** if a subagent fails or times out, tell the user in one line right away, naming the reviewer and the failure, before continuing with the reviewers that completed. Name the failed reviewer in the Coverage section as well. In non-interactive mode, print nothing; list it under the result's `Failed reviewers` section instead. Never block the whole review on one reviewer failure.

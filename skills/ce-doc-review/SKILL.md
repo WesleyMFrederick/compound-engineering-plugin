@@ -62,7 +62,7 @@ The pass is additive and non-blocking: a failure or timeout stops nothing. Tell 
 
 ## Phases 3-5: Synthesis, Presentation, and Next Action
 
-Wait until every dispatched agent has returned, including any cross-model `<reviewer-name>-<provider>.json` returns. Then read `references/synthesis-and-presentation.md`. It defines synthesis, how each finding is routed by confidence and fix class, fix application, the non-interactive result format, and the handoff to the routing question. When promoting agreement, only an artifact with `independence_verified: true` counts as an independent reviewer.
+Wait until every dispatched agent has returned, including any cross-model `<reviewer-name>-<provider>[-<model>].json` returns. Then read `references/synthesis-and-presentation.md`. It defines synthesis, how each finding is routed by confidence and fix class, fix application, the non-interactive result format, and the handoff to the routing question. When promoting agreement, only an artifact with `independence_verified: true` counts as an independent reviewer.
 
 **Interactive mode only.** Read `references/walkthrough.md` for the grouped confirmation, the routing question, and the per-finding walk-through. Read `references/bulk-preview.md` for the bulk-action preview behind best-judgment routing, Append-to-Open-Questions, and auto-resolve. Load neither before review evidence is complete, whether newly collected or validly reused, and a non-interactive run never loads them at all — it stops at the structured review result.
 
