@@ -89,6 +89,8 @@ Before dispatching agents, report what sections are being strengthened and why:
 Strengthening [section names] — [brief reason for each, e.g., "decision rationale is thin", "cross-boundary effects aren't mapped"]
 ```
 
+Add the 5.3.3 score for every section you checked, and the sections selected, to `evidence/plan-confidence.md` before dispatching.
+
 Wherever this phase dispatches a subagent, classify a rejected dispatch by whether an agent launched: correct a pre-launch argument rejection once, leave capacity-limited work queued, and otherwise follow the fallback or failed-pass handling stated for that dispatch.
 
 For each selected section, choose the smallest useful agent set. Do **not** run every agent. Use at most **1-3 agents per section** and usually no more than **8 agents total**.
@@ -190,7 +192,7 @@ If a selected section can be improved by reading the origin document more carefu
 
 **Artifact-backed mode:** For each selected prompt-seeded subagent, pass the absolute `<scratch-dir>` path captured earlier and instruct the subagent to write one compact artifact file inside that directory, then return only a short completion summary. Each artifact should contain: target section, why selected, 3-7 findings, source-backed rationale, the specific plan change implied by each finding. No implementation code, no shell commands.
 
-If an artifact is missing or clearly malformed, re-run that prompt-seeded subagent or fall back to direct-mode reasoning for that section.
+A failed agent, or an artifact that is missing, empty, or clearly malformed, is a failed researcher: stop at that moment and handle it as `references/research.md` states (retry, skip and carry the gap, or abort). Record each agent's tokens and cost in `evidence/plan-confidence.md` following the cost rule in `references/research.md`, with `unknown` and the reason when the harness reports none.
 
 If agent outputs conflict:
 - Prefer repo-grounded and origin-grounded evidence over generic advice
@@ -218,7 +220,7 @@ Findings against `session-settled:`-labeled KTDs are presented like any other �
 
 After all agents have been reviewed, carry only the accepted findings forward to 5.3.7.
 
-If the user accepted no findings, report "No findings accepted — plan unchanged." Then proceed directly to Phase 5.4 (skip document-review and synthesis — the plan was not modified). This interactive-mode-only skip does not apply in auto mode; auto mode always proceeds through 5.3.7 and 5.3.8. No explicit scratch cleanup needed — `$SCRATCH_DIR` is OS temp and will be cleaned up by the OS; leaving it in place preserves the rejected agent artifacts for debugging.
+If the user accepted no findings, report "No findings accepted — plan unchanged." and add that line to `evidence/plan-confidence.md`. Then proceed directly to Phase 5.4 (skip document-review and synthesis — the plan was not modified). This interactive-mode-only skip does not apply in auto mode; auto mode always proceeds through 5.3.7 and 5.3.8. No explicit scratch cleanup needed — `$SCRATCH_DIR` is OS temp and will be cleaned up by the OS; leaving it in place preserves the rejected agent artifacts for debugging.
 
 If findings were accepted and the plan was modified, proceed through 5.3.7 and 5.3.8 as normal — document-review acts as a quality gate on the changes.
 

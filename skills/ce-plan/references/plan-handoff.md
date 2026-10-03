@@ -4,11 +4,13 @@ This file contains post-plan-writing instructions for the Durable path: document
 
 ## 5.3.8 Document Review
 
+**Gate: the confidence check ran.** Before invoking `ce-doc-review`, check that `evidence/plan-confidence.md` (written at 5.3.2) exists. If it is missing, stop. Tell the user the confidence check (5.3.1–5.3.7) was skipped, and offer to run it now; do not start review first. In pipeline mode, return `status: blocked` with `phase: 5.3.2`, that blocker, and running the confidence check as the recovery path.
+
 Invoke the `ce-doc-review` skill with arguments `mode:non-interactive <plan-path>` using the host's normal skill-invocation mechanism. Do not substitute a generic Task, Agent, or subagent; those are delegation mechanisms, not skill invocation. This phase runs for both markdown and HTML; `ce-doc-review` applies fixes in the artifact's native format. It is mandatory — do not skip it because the confidence check already ran. The two workflows catch different classes of issues.
 
 While authoring or revising a draft within the user's planning request, carry that permission to edit into the review: "Apply corrections to this draft's implementation and verification sections needed to satisfy its established Product Contract. Preserve that contract, existing constraints, and user-reserved or session-settled decisions." Supply the document path and the actual contract; the skill name or non-interactive mode alone does not grant permission. If the request does not authorize revising the document, grant no permission to edit. `ce-doc-review` decides whether a fix is applied and enforces its restriction on fixes that only another model found; do not apply a returned proposal merely to bypass that restriction.
 
-If `ce-doc-review` cannot be invoked, record a stand-in structured review result (the shape `ce-doc-review` would normally return) with these values and proceed to Final Checks:
+If `ce-doc-review` cannot be invoked, record a stand-in structured review result (the shape `ce-doc-review` would normally return), save it as `evidence/doc-review-skipped.md` beside `plan-confidence.md`, and proceed to Final Checks. Its values:
 - `fixes_applied = 0`
 - `proposed_fixes_count = 0`, `decisions_count = 0`, `fyi_count = 0`
 - `skipped_reason: skill_unreachable`
@@ -50,6 +52,8 @@ When `OUTPUT_FORMAT=md`, write the markdown directly per `references/markdown-re
 After all mutations in this run have settled (initial write, deepening synthesis, and `ce-doc-review` fixes in the artifact's native format), the artifact at its single path reflects the final state.
 
 ## 5.4 Post-Generation Options
+
+**Gate: both checks left a record.** Before the summary line, the menu, or any already-authorized action, check two files. First, `evidence/plan-confidence.md` must exist. Second, the document review must have left its result: the report path `ce-doc-review` named in its reply this run, or `evidence/doc-review-skipped.md`. The review file is not needed when `plan-confidence.md` records "No findings accepted — plan unchanged" (the interactive re-deepen path that skips review). If a file is missing, stop and tell the user which step was skipped (the confidence check or document review) and offer to run it; do not show the menu. In pipeline mode, return `status: blocked` with the skipped step as `phase` and running it as the recovery path.
 
 **Already-authorized next action:** If the request already authorizes what happens after the plan (implement, open a goal, create an issue, stop), fire that action. Do not present the menu to re-ask. Pipeline mode still returns to the caller.
 

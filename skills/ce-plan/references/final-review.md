@@ -97,7 +97,7 @@ Plan written to <absolute path to plan>
 
 #### 5.3 Confidence Check and Deepening
 
-A deepen run enters here from Phase 0.1 without passing intake. For a material Durable run, use the host's task-tracking capability when available to show route-level outcomes and meaningful transitions; if unavailable, continue without simulating it in chat.
+A deepen run enters here from Phase 0.1 without passing intake. For a material Durable run, use the host's task-tracking capability when available to show route-level outcomes and meaningful transitions; if unavailable, continue without simulating it in chat. On entering 5.3, delete any `evidence/plan-confidence.md` and `evidence/doc-review-skipped.md` left by an earlier run, so the handoff gates only see records this run wrote.
 
 Auto mode is the default during plan generation and synthesizes subagent findings directly into the plan. Interactive mode is activated by the Phase 0.1 re-deepen fast path and presents each finding for the user to accept or reject. Pipeline runs always use auto mode.
 
@@ -126,6 +126,8 @@ Build a risk profile. Treat these as high-risk signals:
 - **Deep** or high-risk plans often benefit from a targeted second pass
 - **Thin local grounding override:** If Phase 1.2 (Decide on External Research) triggered external research because local patterns were thin (fewer than 3 direct examples or adjacent-domain match), always proceed to scoring regardless of how grounded the plan appears. When the plan was built on unfamiliar territory, claims about system behavior are more likely to be assumptions than verified facts. The scoring pass is cheap — if the plan is genuinely solid, scoring finds nothing and exits quickly
 - **External-research-shaped-the-plan override:** If Phase 1.4 (Consolidate Research) recorded that external research materially shaped a KTD, Alternative, Scope boundary, or Risk, always proceed to scoring — **even when local implementation patterns are strong**. A landscape or prior-art finding can shape recommendations the local codebase cannot verify, and the thin-grounding override above would miss it. This enters the scoring pass only; it does not force deepening
+
+**Write the confidence record when you decide.** Save `<absolute feature folder>/evidence/plan-confidence.md`, using the feature folder defined in `references/research.md`; without a feature folder, put `evidence/` in that file's private temp fallback directory and say the record will not be kept. The record holds the plan path, the depth and risk signals, which overrides applied, each section scored with its score (or "none scored" when the gate passes without scoring), and the decision: deepen the named sections, or no deepening and why. The handoff checks this file, so a run that skips this step cannot reach review or the menu.
 
 If the plan already appears sufficiently grounded and neither the thin-grounding override nor the external-research-shaped-the-plan override applies, report "Confidence check passed — no sections need strengthening", then **load `references/plan-handoff.md` now and execute 5.3.8 → 5.3.9 → 5.4 in sequence**. Document review is mandatory for both markdown and HTML plans — do not skip it because the confidence check passed. The two tools catch different classes of issues.
 

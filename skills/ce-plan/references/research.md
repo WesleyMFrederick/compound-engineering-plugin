@@ -59,6 +59,10 @@ RESEARCH_DIR="$SCRATCH_ROOT/ce-plan-research/$(openssl rand -hex 4)";
 echo "$RESEARCH_DIR";
 ```
 
+**A researcher that fails or returns nothing stops the run at that moment.** This covers a dispatch error, a timeout, a "research unavailable" report, an empty return, or a dossier file that is missing or empty. Tell the user which researcher failed and why, then ask: retry it, skip it and carry the gap, or abort the plan. Do not continue to the next phase first, and do not save the failure for the final report. In pipeline mode there is no one to ask: retry once, then skip and carry the gap, and name the researcher in the returned result.
+
+**Record each researcher's cost.** Append one line per researcher to `$RESEARCH_DIR/usage.md`: the researcher, tokens in / out / total, and cost in USD, read from what the harness reports for that subagent. When the harness reports no usage, write `unknown` and the reason, such as `unknown — harness exposes no per-subagent usage`. Never estimate.
+
 Run these agents in parallel:
 
 - `references/agents/repo-research-analyst.md` — scope: **patterns**. Pass the planning context summary and `$RESEARCH_DIR/repo-research.md` so it can go directly to current feature patterns and the code that implements them.
@@ -161,7 +165,7 @@ If Step 1.2 indicates external research is useful, dispatch by the **intent** cl
 - **Landscape / option-discovery** — `references/agents/web-researcher.md` with the focus hint, the planning context summary, and `$RESEARCH_DIR/web.md`. When the request targets projects on a code host (e.g., "competitors on GitHub"), name the discovery dimensions in the focus hint: project names and URLs, release recency and activity, CLI/UX shape, install path, docs and examples, plugin/extension surfaces, recurring issue themes, and license — treating star counts as a weak signal only.
 - **Mixed** — **sequential, not parallel**: run the `web-researcher` local prompt first, writing `$RESEARCH_DIR/web.md`, to map the landscape and produce a shortlist; then run the `framework-docs-researcher` and/or `best-practices-researcher` local prompts, writing `$RESEARCH_DIR/framework-docs.md` and `$RESEARCH_DIR/best-practices.md`, against the shortlisted technologies only when their details materially shape the plan.
 
-**Tool-unavailable handling.** `web-researcher` self-checks for web tools and stops if they are missing. Never block on this: if it reports research unavailable, or any researcher fails, warn and proceed, and carry the gap into Phase 1.4 so the plan records it honestly — especially when the user explicitly requested external research, where a silent skip would leave the plan looking evidence-based when it is not.
+**Tool-unavailable handling.** `web-researcher` self-checks for web tools and stops if they are missing; that report is a failed researcher, handled by the stop-and-ask rule above. Whatever the user chooses, carry the gap into Phase 1.4 so the plan records it honestly — especially when the user explicitly requested external research, where a silent skip would leave the plan looking evidence-based when it is not.
 
 #### 1.4 Consolidate Research
 
