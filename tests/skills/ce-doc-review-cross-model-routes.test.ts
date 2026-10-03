@@ -148,7 +148,8 @@ function run(
   runDir: string,
   env: NodeJS.ProcessEnv = process.env,
 ) {
-  const effectiveEnv = { ...env }
+  // Test run dirs live in temp on purpose; the script refuses temp without this opt-in.
+  const effectiveEnv = { CE_DOC_REVIEW_TEMP_EVIDENCE: "1", ...env }
   if (!("CROSS_MODEL_DRY_RUN" in effectiveEnv) && !("CROSS_MODEL_FIXED_ROUTE" in effectiveEnv)) {
     const target = args[1]
     const grokAvailable = target === "grok" && Boolean(spawnSync("command", ["-v", "grok"], {
@@ -1893,5 +1894,55 @@ describe("cross-model-doc-review per-model peers and saved prompts", () => {
     const argv = emitAdapter("codex", {}).length ? spawnSync("bash", [SCRIPT, "--emit-adapter", "codex", "omp"], { encoding: "utf8" }).stdout : ""
     // Then the brief file is passed as the system prompt
     expect(argv).toContain("--system-prompt <system-prompt-file>")
+  })
+})
+
+describe("cross-model-doc-review evidence location", () => {
+  const claudeStub =
+    `#!/bin/sh\ncat >/dev/null\nprintf '%s' '{"structured_output":{"reviewer":"adversarial","findings":[{"section":"X","title":"t"}]}}'\n`
+
+  test("Given a temp run dir without the opt-in, When the peer runs, Then it refuses loudly and writes nothing", () => {
+    // Given a working claude peer and a run dir under the temp root
+    const { env } = sandbox(["claude"], claudeStub)
+    const doc = makeDoc()
+    const runDir = makeRunDir()
+    // When the caller did not set CE_DOC_REVIEW_TEMP_EVIDENCE
+    const r = run(["codex", "claude", "adversarial", doc, "plan", "none", runDir], runDir, { ...env, CE_DOC_REVIEW_TEMP_EVIDENCE: "" })
+    // Then it exits nonzero (not a clean skip), names the resolver, and publishes no artifact
+    expect(r.code).toBe(2)
+    expect(r.stderr).toContain("is under a temp root, so the run files would be lost")
+    expect(r.stderr).toContain("resolve-evidence-dir.sh")
+    expect(r.files.filter((f) => f.endsWith(".json"))).toEqual([])
+  })
+
+  test("Given a temp run dir with the opt-in, When the peer runs, Then the artifact records evidence_kept false", () => {
+    // Given a working claude peer and a temp run dir the caller accepted
+    const { env } = sandbox(["claude"], claudeStub)
+    const doc = makeDoc()
+    const runDir = makeRunDir()
+    // When CE_DOC_REVIEW_TEMP_EVIDENCE=1
+    const r = run(["codex", "claude", "adversarial", doc, "plan", "none", runDir], runDir, { ...env, CE_DOC_REVIEW_TEMP_EVIDENCE: "1" })
+    // Then the artifact and the log both say the run files will not be kept
+    expect(r.code).toBe(0)
+    const out = JSON.parse(readFileSync(path.join(runDir, "adversarial-claude.json"), "utf8"))
+    expect(out.evidence_kept).toBe(false)
+    expect(r.stderr).toContain("evidence_kept=false")
+  })
+
+  test("Given a run dir outside temp, When the peer runs, Then the artifact records evidence_kept true", () => {
+    // Given a run dir in the checkout, outside every temp root
+    const { env } = sandbox(["claude"], claudeStub)
+    const doc = makeDoc()
+    const runDir = mkdtempSync(path.join(process.cwd(), ".evidence-test-"))
+    try {
+      // When the peer runs without the opt-in
+      const r = run(["codex", "claude", "adversarial", doc, "plan", "none", runDir], runDir, { ...env, CE_DOC_REVIEW_TEMP_EVIDENCE: "" })
+      // Then it publishes the artifact marked as kept
+      expect(r.code).toBe(0)
+      const out = JSON.parse(readFileSync(path.join(runDir, "adversarial-claude.json"), "utf8"))
+      expect(out.evidence_kept).toBe(true)
+    } finally {
+      rmSync(runDir, { recursive: true, force: true })
+    }
   })
 })

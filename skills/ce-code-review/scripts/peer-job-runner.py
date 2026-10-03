@@ -63,7 +63,8 @@ Environment overrides (defaults in parentheses):
   CE_PEER_JOBS_ROOT         base dir (/tmp/compound-engineering-<effective-uid>,
                             or $TMPDIR/compound-engineering-<effective-uid> when
                             /tmp cannot host a writable private root, e.g. under
-                            a sandbox that only allowlists $TMPDIR)
+                            a sandbox that only allowlists $TMPDIR); required
+                            to start --skill ce-doc-review jobs
   CE_WORK_RUNS_ROOT         parent CE Work dir containing all <run-id>/ dirs
   CE_PEER_IDLE_SECS         idle window, no out.log growth (240)
   CE_PEER_HARD_SECS         hard cap on worker wall clock
@@ -1968,6 +1969,13 @@ def cmd_start(args, worker_argv) -> int:
         raise RunnerError(f"--label must match [A-Za-z0-9._-]+ and not be all dots (got {args.label!r})")
     if not worker_argv:
         raise RunnerError("no worker argv; place it after `--`")
+    if args.skill == "ce-doc-review" and not os.environ.get("CE_PEER_JOBS_ROOT"):
+        # ce-doc-review job folders are review evidence; the shared temp default
+        # would lose them. The skill resolves the folder with resolve-evidence-dir.sh.
+        raise RunnerError(
+            "ce-doc-review needs CE_PEER_JOBS_ROOT set to the review's evidence folder "
+            "(from scripts/resolve-evidence-dir.sh); refusing to default to temp"
+        )
 
     base = jobs_root_base()
     skill_dir = skill_runs_root(args.skill)

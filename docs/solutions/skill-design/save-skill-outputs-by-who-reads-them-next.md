@@ -34,7 +34,13 @@ Classify each file a skill writes by **who reads it next**, then pick the path f
 | A person or later run checking the shipped artifact | ce-plan Phase 1 dossiers, ce-brainstorm `grounding.md` | `<feature folder>/research/<fixed-name>.md` |
 | A person checking why a reviewed doc changed | ce-doc-review prompts, slices, raw reviewer findings, peer job folders, the final report | `<feature folder>/evidence/doc-review-<run-id>/` plus `evidence/doc-review-<run-id>.md` |
 
-`research/` holds what a plan rests on; `evidence/` holds what a review of that plan rests on. ce-doc-review's rule lives once, in `skills/ce-doc-review/references/dispatch.md` "Where run files go", so it has no parity fixture; add one only when a second skill copies the block. Its cross-model peer jobs land inside the evidence folder through `CE_PEER_JOBS_ROOT="$RUN_DIR"` and `start --no-sweep`, which leaves the byte-identical `peer-job-runner.py` untouched. A run-id folder under a feature's `evidence/` is never swept by a later run.
+`research/` holds what a plan rests on; `evidence/` holds what a review of that plan rests on. ce-doc-review's rule is code, not prose, because an agent following prose still wrote a live review's evidence to `/tmp` and it had to be copied by hand. Three layers enforce it:
+
+- `skills/ce-doc-review/scripts/resolve-evidence-dir.sh <document-path> <run-id>` decides the folder: the document's own folder, refused when it is under a temp root, is the repo root, or is a shared `plans`/`docs`/`design-docs`/`features` folder. It also refuses a malformed or already-used run id, creates `evidence/doc-review-<run-id>/` mode 700, and prints it. `--temp-ok` is the explicit no-feature-folder path; it says the run files will not be kept. `references/dispatch.md` "Where run files go" only calls it.
+- `cross-model-doc-review.sh` exits 2 on a run dir under a temp root (asking the resolver's `--is-temp`, so the temp-root list lives once) unless `CE_DOC_REVIEW_TEMP_EVIDENCE=1`, which stamps `"evidence_kept": false` on each peer artifact.
+- `peer-job-runner.py start --skill ce-doc-review` refuses an unset `CE_PEER_JOBS_ROOT` instead of defaulting to temp. The six runner copies stay byte-identical (`tests/peer-job-runner-parity.test.ts`).
+
+Tests that use temp folders opt in on purpose (`CE_DOC_REVIEW_TEMP_EVIDENCE=1` in the route-test `run()` helper; `--temp-ok` in `tests/skills/ce-doc-review-evidence-dir.test.ts`). A run-id folder under a feature's `evidence/` is never swept by a later run, because peer jobs start with `--no-sweep`.
 
 For the second row, ce-plan and ce-brainstorm now share one rule block, marked `<!-- ce-research-dir:start -->` / `<!-- ce-research-dir:end -->`:
 

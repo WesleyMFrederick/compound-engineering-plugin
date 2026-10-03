@@ -442,6 +442,19 @@ RUN_DIR="${7:-}"
 # Requiring it to pre-exist would silently no-op the whole pass (no fold-in files).
 mkdir -p "$RUN_DIR" 2>/dev/null
 [ -d "$RUN_DIR" ] || skip "run-dir '$RUN_DIR' could not be created; skipping"
+# Run files belong in the reviewed document's feature folder (resolve-evidence-dir.sh
+# decides where). A temp RUN_DIR loses them, so refuse it loudly — a refusal, not a
+# skip — unless the caller opted in to throwaway evidence.
+EVIDENCE_KEPT=true
+if bash "$(dirname "${BASH_SOURCE[0]}")/resolve-evidence-dir.sh" --is-temp "$RUN_DIR"; then
+  if [ "${CE_DOC_REVIEW_TEMP_EVIDENCE:-}" = "1" ]; then
+    EVIDENCE_KEPT=false
+    log "evidence_kept=false: run-dir '$RUN_DIR' is under a temp root (CE_DOC_REVIEW_TEMP_EVIDENCE=1); run files will not be kept"
+  else
+    log "ERROR: run-dir '$RUN_DIR' is under a temp root, so the run files would be lost. Pass the folder printed by scripts/resolve-evidence-dir.sh <document-path> <run-id>, or set CE_DOC_REVIEW_TEMP_EVIDENCE=1 to keep this run in temp on purpose."
+    exit 2
+  fi
+fi
 command -v jq >/dev/null 2>&1 || skip "jq not installed; skipping"
 
 # Validate the host identity tuple. An unknown serving family is allowed, but
@@ -1373,6 +1386,7 @@ run_provider() {   # <provider>
          --arg family "$_target_family" --argjson independent "$_independent" \
          --arg mreq "$(route_model "$ACTUAL_ROUTE")" --arg mact "$MODEL_ACTUAL" \
          --arg ereq "$(route_effort "$ACTUAL_ROUTE")" --argjson usage "${PEER_USAGE:-null}" \
+         --argjson kept "$EVIDENCE_KEPT" \
          'if (.findings|type)=="array"
           then { reviewer: $r,
                  cross_model_route: $route,
@@ -1386,7 +1400,8 @@ run_provider() {   # <provider>
                  findings: [ .findings[] | if (.autofix_class? == "safe_auto") then .autofix_class = "gated_auto" else . end ],
                  residual_risks: (.residual_risks // []),
                  deferred_questions: (.deferred_questions // []),
-                 usage: $usage }
+                 usage: $usage,
+                 evidence_kept: $kept }
           else empty end' \
          "$RAW_OUT" > "$_norm" 2>/dev/null; then
       mv "$_norm" "$OUT"

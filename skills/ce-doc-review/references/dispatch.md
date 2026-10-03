@@ -20,25 +20,16 @@ Resolve `EVIDENCE_DIR` before building the first reviewer prompt or starting any
 
 **Save this review's run files beside the document, not in temp.** A later reader checking why the document changed needs the prompts, raw reviewer answers, and job logs the review rested on, so they live with the feature and survive the session.
 
-- **Feature folder:** the folder the user named for this work, or the folder that holds the reviewed document when that folder holds only this work. Never use a shared folder such as `<root>/plans/` or the repo root.
-- **Run id:** pick `<run-id>` once for this review: letters, digits, `.`, `_`, or `-` only, and not already used in the folder it lands in (for example `round-1`, then `round-2` on the next round). Every later `<run-id>` in this skill is this value.
-- **With a feature folder:** set `EVIDENCE_DIR="<absolute feature folder>/evidence/doc-review-<run-id>"` and create it private: `mkdir -p "<absolute feature folder>/evidence" && (umask 077; mkdir -p "$EVIDENCE_DIR") && chmod 700 "$EVIDENCE_DIR"`. Keep everything in it after the review.
-- **Without one** (no repo, or no folder holds only this work): set `EVIDENCE_DIR` to this skill's private temp run directory from the command below, and say in one line that this review's run files will not be kept.
-- **What goes in it:** each built reviewer prompt as `prompt-<reviewer-name>.md`, each slice handed to a cross-model peer as `slice-<reviewer-name>.md`, each in-process reviewer's returned JSON verbatim as `findings-<reviewer-name>.json`, each peer's `<reviewer-name>-<target>.json`, and the peer job folders the runner creates under it.
-- **The report:** with a feature folder, also write the final review report to `<absolute feature folder>/evidence/doc-review-<run-id>.md`.
-
-The private temp run directory, for the no-feature-folder case only (the printed path is `EVIDENCE_DIR`):
+Pick `<run-id>` once for this review (for example `round-1`, then `round-2` on the next round); every later `<run-id>` in this skill is this value. Then run the resolver; the path it prints is `EVIDENCE_DIR`:
 
 ```bash
-SCRATCH_ROOT="/tmp/compound-engineering-$(id -u)";
-[ ! -L "$SCRATCH_ROOT" ] && (umask 077; mkdir -p "$SCRATCH_ROOT") 2>/dev/null && [ ! -L "$SCRATCH_ROOT" ] && [ -O "$SCRATCH_ROOT" ] && [ -w "$SCRATCH_ROOT" ] || SCRATCH_ROOT="${TMPDIR:-/tmp}/compound-engineering-$(id -u)";
-if [ -L "$SCRATCH_ROOT" ]; then echo "unsafe scratch root symlink: $SCRATCH_ROOT" >&2; exit 1; fi;
-(umask 077; mkdir -p "$SCRATCH_ROOT") || exit 1;
-if [ -L "$SCRATCH_ROOT" ] || [ ! -O "$SCRATCH_ROOT" ]; then echo "scratch root is not owned by the current user: $SCRATCH_ROOT" >&2; exit 1; fi;
-chmod 700 "$SCRATCH_ROOT" || exit 1;
-RUN_DIR="$SCRATCH_ROOT/ce-doc-review/<run-id>"; (umask 077; mkdir -p "$RUN_DIR") || exit 1; chmod 700 "$RUN_DIR" || exit 1;
-echo "$RUN_DIR"
+bash "<absolute path of the directory containing the ce-doc-review SKILL.md you read>/scripts/resolve-evidence-dir.sh" "<document-path>" "<run-id>"
 ```
+
+It uses the document's own folder as the feature folder and creates `<feature folder>/evidence/doc-review-<run-id>/`, private. It refuses, with the reason, a document in temp, at the repo root, or in a shared folder, and a run id that is malformed or already used. A run-id refusal: pick a new run id. A folder refusal means there is no feature folder to use: rerun with `--temp-ok` before the document path; it prints a private temp folder, and you say in one line that this review's run files will not be kept. Never build the path by hand.
+
+- **What goes in it:** each built reviewer prompt as `prompt-<reviewer-name>.md`, each slice handed to a cross-model peer as `slice-<reviewer-name>.md`, each in-process reviewer's returned JSON verbatim as `findings-<reviewer-name>.json`, each peer's `<reviewer-name>-<target>.json`, and the peer job folders the runner creates under it.
+- **The report:** with a feature folder, also write the final review report to `<absolute feature folder>/evidence/doc-review-<run-id>.md`.
 
 Each subagent receives the prompt built from the subagent template included below, with these variables filled:
 

@@ -84,7 +84,7 @@ The gate runs once per review, after the Step 3 announce and before the first `s
 ```bash
 SKILL_DIR="<absolute path of the directory containing the ce-doc-review SKILL.md you read>";
 PY="$(for c in python3 python py; do command -v "$c" >/dev/null 2>&1 && "$c" -c '' >/dev/null 2>&1 && { echo "$c"; break; }; done)"; [ -n "$PY" ] || { echo "no working Python 3 interpreter on PATH" >&2; exit 1; };
-RUN_DIR="<absolute EVIDENCE_DIR from references/dispatch.md>";
+RUN_DIR="<absolute EVIDENCE_DIR printed by scripts/resolve-evidence-dir.sh, per references/dispatch.md>";
 "$PY" "$SKILL_DIR/scripts/astra-gate.py" --plan "<full document path>" --out "$RUN_DIR/astra-gate.json" && jq -r '.lineup[]' "$RUN_DIR/astra-gate.json"
 ```
 
@@ -136,12 +136,12 @@ Disclose that this is not launcher-only isolation: the detached worker inherits 
 ```bash
 SKILL_DIR="<absolute path of the directory containing the ce-doc-review SKILL.md you read>";
 PY="$(for c in python3 python py; do command -v "$c" >/dev/null 2>&1 && "$c" -c '' >/dev/null 2>&1 && { echo "$c"; break; }; done)"; [ -n "$PY" ] || { echo "no working Python 3 interpreter on PATH" >&2; exit 1; };
-RUN_DIR="<absolute EVIDENCE_DIR from references/dispatch.md>"; [ -d "$RUN_DIR" ] && [ ! -L "$RUN_DIR" ] && [ -O "$RUN_DIR" ] || { echo "evidence dir missing or not owned: $RUN_DIR" >&2; exit 1; };
+RUN_DIR="<absolute EVIDENCE_DIR printed by scripts/resolve-evidence-dir.sh, per references/dispatch.md>"; [ -d "$RUN_DIR" ] && [ ! -L "$RUN_DIR" ] && [ -O "$RUN_DIR" ] || { echo "evidence dir missing or not owned: $RUN_DIR" >&2; exit 1; };
 echo "peer-deadline-secs=$(( ${CROSS_MODEL_HARD_SECS:-1200} + 10 ))";
 CE_PEER_JOBS_ROOT="$RUN_DIR" CE_PEER_HARD_SECS= CROSS_MODEL_HOST_HARNESS="<host-harness>" CROSS_MODEL_FIXED_ROUTE="<fixed-route>" "$PY" "$SKILL_DIR/scripts/peer-job-runner.py" start --skill ce-doc-review --run-id "<run-id>" --label "<reviewer-name>" --no-sweep -- env CROSS_MODEL_HOST_HARNESS="<host-harness>" CROSS_MODEL_FIXED_ROUTE="<fixed-route>" bash "$SKILL_DIR/scripts/cross-model-doc-review.sh" "<host-serving-family>" "<target>" "<reviewer-name>" "<document-path>" "<document-type>" "<origin>" "$RUN_DIR"
 ```
 
-`CE_PEER_JOBS_ROOT="$RUN_DIR"` puts each job folder at `$RUN_DIR/ce-doc-review/<run-id>/jobs/<job-id>/`, inside the evidence folder. Every later `wait`, `status`, `result`, and `reap` call must carry the same `CE_PEER_JOBS_ROOT="<run-dir>"` prefix, or a bare job id will not resolve.
+`CE_PEER_JOBS_ROOT="$RUN_DIR"` puts each job folder at `$RUN_DIR/ce-doc-review/<run-id>/jobs/<job-id>/`, inside the evidence folder. Every later `wait`, `status`, `result`, and `reap` call must carry the same `CE_PEER_JOBS_ROOT="<run-dir>"` prefix, or a bare job id will not resolve. The runner refuses to start a ce-doc-review job without `CE_PEER_JOBS_ROOT`, and the peer script refuses a run dir under temp. Only when the resolver ran with `--temp-ok` add `CE_DOC_REVIEW_TEMP_EVIDENCE=1` to the worker's `env`; each peer artifact then records `"evidence_kept": false`.
 
 When Step 1 resolved a configured model or effort, add `CROSS_MODEL_MODEL_OVERRIDE_TARGET="<target>" CROSS_MODEL_MODEL_OVERRIDE="<model>"` and/or `CROSS_MODEL_EFFORT_OVERRIDE="<effort>"` to the `env` prefix after `CROSS_MODEL_FIXED_ROUTE`; omit them when unset.
 
