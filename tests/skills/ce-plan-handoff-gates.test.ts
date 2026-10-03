@@ -16,14 +16,15 @@ describe("ce-plan cannot reach review or the menu without a confidence record", 
   const finalReview = read("references/final-review.md")
   const handoff = read("references/plan-handoff.md")
 
-  test("Given a new 5.3 pass, When it starts, Then records from an earlier run are cleared", () => {
+  test("Given a new 5.3 pass, When it starts, Then it mints one run id that both records must name", () => {
     // Given / When
     const entry = section(finalReview, "#### 5.3 Confidence Check and Deepening", "##### 5.3.1")
     // Then
-    expect(entry).toContain("delete any `evidence/plan-confidence.md` and `evidence/doc-review-skipped.md`")
+    expect(entry).toContain('PLAN_RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-$(openssl rand -hex 3)"')
+    expect(entry).toContain("a record left by another run cannot pass the handoff gates")
   })
 
-  test("Given the 5.3.2 decision, When either branch is taken, Then the record is written before the branch", () => {
+  test("Given the 5.3.2 decision, When either branch is taken, Then a run-bound record is written before the branch", () => {
     // Given
     const gate = section(finalReview, "##### 5.3.2", "##### 5.3.3")
     // When
@@ -32,39 +33,60 @@ describe("ce-plan cannot reach review or the menu without a confidence record", 
     // Then
     expect(record).toBeGreaterThanOrEqual(0)
     expect(record).toBeLessThan(passBranch)
+    expect(gate).toContain("Its first two lines are `run: <PLAN_RUN_ID>` and `plan-sha256: <checksum>`")
+    expect(gate).toContain(`openssl dgst -sha256 -r "<plan path>" | cut -d' ' -f1`)
     expect(gate).toContain("each section scored with its score")
     expect(gate).toContain("deepen the named sections, or no deepening and why")
+  })
+
+  test("Given deepening rewrites the plan, When synthesis ends, Then the record's checksum moves to the plan review receives", () => {
+    const deepening = read("references/deepening-workflow.md")
+    const synth = deepening.slice(deepening.indexOf("## 5.3.7"))
+    expect(synth).toContain("set `plan-sha256:` in `evidence/plan-confidence.md` to the checksum of the plan as synthesized")
   })
 
   test("Given document review is next, When the record is missing, Then the run stops before invoking ce-doc-review", () => {
     // Given
     const review = section(handoff, "## 5.3.8 Document Review", "## 5.3.9")
     // When
-    const gate = review.indexOf("**Gate: the confidence check ran.**")
+    const gate = review.indexOf("**Gate: the confidence check ran for this plan.**")
     const invoke = review.indexOf("Invoke the `ce-doc-review` skill")
     // Then
     expect(gate).toBeGreaterThanOrEqual(0)
     expect(gate).toBeLessThan(invoke)
-    expect(review).toContain("Tell the user the confidence check (5.3.1–5.3.7) was skipped")
+    expect(review).toContain("its `run:` line equals this run's `PLAN_RUN_ID`")
+    expect(review).toContain("its `plan-sha256:` line equals the plan file's current checksum")
+    expect(review).toContain("A run with no `PLAN_RUN_ID` never started the confidence check")
     expect(review).toContain("`status: blocked` with `phase: 5.3.2`")
   })
 
-  test("Given review could not start, When the stand-in is recorded, Then it is saved where the menu gate looks", () => {
+  test("Given a stale or foreign confidence record, When the gate rejects it, Then it names why", () => {
     const review = section(handoff, "## 5.3.8 Document Review", "## 5.3.9")
-    expect(review).toContain("save it as `evidence/doc-review-skipped.md`")
+    expect(review).toContain("it belongs to another run (name both run ids)")
+    expect(review).toContain("the plan changed after the check (name both checksums)")
   })
 
-  test("Given the handoff menu, When either record is missing, Then the gate runs before the summary, menu, or authorized action", () => {
+  test("Given review settles or cannot start, When the review record is written, Then it names this run and the plan as reviewed", () => {
+    const review = section(handoff, "## 5.3.8 Document Review", "## 5.3.9")
+    expect(review).toContain("record a stand-in structured review result (the shape `ce-doc-review` would normally return) in the review record below")
+    expect(review).toContain("Save `evidence/plan-review-record.md` beside `plan-confidence.md`")
+    expect(review).toContain("the checksum of the plan file as reviewed, after review fixes")
+    expect(review.indexOf("**Write the review record")).toBeLessThan(review.indexOf("**Pipeline mode:**"))
+  })
+
+  test("Given the handoff menu, When a record is missing, foreign, or stale, Then the gate stops before the summary, menu, or authorized action and says why", () => {
     // Given
     const menu = section(handoff, "## 5.4 Post-Generation Options", "**Summary line above the menu")
     // When
-    const gate = menu.indexOf("**Gate: both checks left a record.**")
+    const gate = menu.indexOf("**Gate: both records belong to this run and this plan.**")
     const authorized = menu.indexOf("**Already-authorized next action:**")
     // Then
     expect(gate).toBeGreaterThanOrEqual(0)
     expect(gate).toBeLessThan(authorized)
-    expect(menu).toContain("the report path `ce-doc-review` named in its reply this run, or `evidence/doc-review-skipped.md`")
-    expect(menu).toContain("tell the user which step was skipped")
+    expect(menu).toContain("`evidence/plan-review-record.md` must exist, name this run, carry the current checksum")
+    expect(menu).toContain("which step was skipped (the confidence check or document review)")
+    expect(menu).toContain("which record belongs to another run (name both run ids)")
+    expect(menu).toContain("the plan changed after review (name both checksums)")
   })
 
   test("Given the interactive no-findings path skips review, When it reaches 5.4, Then the record carries the exemption the gate accepts", () => {
@@ -73,6 +95,7 @@ describe("ce-plan cannot reach review or the menu without a confidence record", 
     const exemption = "No findings accepted — plan unchanged"
     expect(deepening).toContain(`"${exemption}." and add that line to \`evidence/plan-confidence.md\``)
     expect(menu).toContain(`records "${exemption}"`)
+    expect(menu).toContain("then `plan-confidence.md` must carry the current checksum instead")
   })
 })
 

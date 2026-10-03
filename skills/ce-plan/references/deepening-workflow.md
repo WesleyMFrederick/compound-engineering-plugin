@@ -261,3 +261,5 @@ If research reveals a product-level ambiguity that should change behavior or sco
 - Do not silently decide it here
 - Record it under `Open Questions`
 - Recommend `ce-brainstorm` if the gap is truly product-defining
+
+After synthesis, set `plan-sha256:` in `evidence/plan-confidence.md` to the checksum of the plan as synthesized, using the command in `references/final-review.md` 5.3.2. That is the plan document review receives.
