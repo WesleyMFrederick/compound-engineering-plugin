@@ -14,6 +14,32 @@ For each selected reviewer, read `references/personas/<reviewer-name>.md` and pa
 - `security-lens-reviewer`, `feasibility-reviewer`, `product-lens-reviewer`, `adversarial-document-reviewer`: inherit the parent model unless the harness has an established high-capability review tier.
 - `design-lens-reviewer`, `scope-guardian-reviewer`: platform mid-tier model.
 
+## Where run files go
+
+Resolve `EVIDENCE_DIR` before building the first reviewer prompt or starting any cross-model job.
+
+**Save this review's run files beside the document, not in temp.** A later reader checking why the document changed needs the prompts, raw reviewer answers, and job logs the review rested on, so they live with the feature and survive the session.
+
+- **Feature folder:** the folder the user named for this work, or the folder that holds the reviewed document when that folder holds only this work. Never use a shared folder such as `<root>/plans/` or the repo root.
+- **Run id:** pick `<run-id>` once for this review: letters, digits, `.`, `_`, or `-` only, and not already used in the folder it lands in (for example `round-1`, then `round-2` on the next round). Every later `<run-id>` in this skill is this value.
+- **With a feature folder:** set `EVIDENCE_DIR="<absolute feature folder>/evidence/doc-review-<run-id>"` and create it private: `mkdir -p "<absolute feature folder>/evidence" && (umask 077; mkdir -p "$EVIDENCE_DIR") && chmod 700 "$EVIDENCE_DIR"`. Keep everything in it after the review.
+- **Without one** (no repo, or no folder holds only this work): set `EVIDENCE_DIR` to this skill's private temp run directory from the command below, and say in one line that this review's run files will not be kept.
+- **What goes in it:** each built reviewer prompt as `prompt-<reviewer-name>.md`, each slice handed to a cross-model peer as `slice-<reviewer-name>.md`, each in-process reviewer's returned JSON verbatim as `findings-<reviewer-name>.json`, each peer's `<reviewer-name>-<target>.json`, and the peer job folders the runner creates under it.
+- **The report:** with a feature folder, also write the final review report to `<absolute feature folder>/evidence/doc-review-<run-id>.md`.
+
+The private temp run directory, for the no-feature-folder case only (the printed path is `EVIDENCE_DIR`):
+
+```bash
+SCRATCH_ROOT="/tmp/compound-engineering-$(id -u)";
+[ ! -L "$SCRATCH_ROOT" ] && (umask 077; mkdir -p "$SCRATCH_ROOT") 2>/dev/null && [ ! -L "$SCRATCH_ROOT" ] && [ -O "$SCRATCH_ROOT" ] && [ -w "$SCRATCH_ROOT" ] || SCRATCH_ROOT="${TMPDIR:-/tmp}/compound-engineering-$(id -u)";
+if [ -L "$SCRATCH_ROOT" ]; then echo "unsafe scratch root symlink: $SCRATCH_ROOT" >&2; exit 1; fi;
+(umask 077; mkdir -p "$SCRATCH_ROOT") || exit 1;
+if [ -L "$SCRATCH_ROOT" ] || [ ! -O "$SCRATCH_ROOT" ]; then echo "scratch root is not owned by the current user: $SCRATCH_ROOT" >&2; exit 1; fi;
+chmod 700 "$SCRATCH_ROOT" || exit 1;
+RUN_DIR="$SCRATCH_ROOT/ce-doc-review/<run-id>"; (umask 077; mkdir -p "$RUN_DIR") || exit 1; chmod 700 "$RUN_DIR" || exit 1;
+echo "$RUN_DIR"
+```
+
 Each subagent receives the prompt built from the subagent template included below, with these variables filled:
 
 | Variable | Value |
@@ -36,7 +62,9 @@ Round 1 — no prior decisions.
 </prior-decisions>
 ```
 
-**Error handling:** if a subagent fails or times out, proceed with the findings from those that completed and name the failed reviewer in the Coverage section. Never block the whole review on one reviewer failure.
+**Save as you go.** Write each reviewer's built prompt to `$EVIDENCE_DIR/prompt-<reviewer-name>.md` when you dispatch it, and its returned JSON, unedited, to `$EVIDENCE_DIR/findings-<reviewer-name>.json` when it returns, before synthesis reads it.
+
+**Error handling:** if a subagent fails or times out, tell the user in one line right away, naming the reviewer and the failure, before continuing with the reviewers that completed. Name the failed reviewer in the Coverage section as well. In non-interactive mode, print nothing; list it under the result's `Failed reviewers` section instead. Never block the whole review on one reviewer failure.
 
 
 ## Compound Pack constraints

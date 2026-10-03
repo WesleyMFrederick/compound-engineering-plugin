@@ -32,6 +32,9 @@ Classify each file a skill writes by **who reads it next**, then pick the path f
 |---|---|---|
 | Only this run (orchestrator reads it back, then it is dead) | ce-compound `related.json`, ce-plan deepening artifacts, visual probes, elevation handoff bundles | Private temp: the scratch-root preamble or `mktemp -d "${TMPDIR:-/tmp}/<prefix>-XXXXXX"` |
 | A person or later run checking the shipped artifact | ce-plan Phase 1 dossiers, ce-brainstorm `grounding.md` | `<feature folder>/research/<fixed-name>.md` |
+| A person checking why a reviewed doc changed | ce-doc-review prompts, slices, raw reviewer findings, peer job folders, the final report | `<feature folder>/evidence/doc-review-<run-id>/` plus `evidence/doc-review-<run-id>.md` |
+
+`research/` holds what a plan rests on; `evidence/` holds what a review of that plan rests on. ce-doc-review's rule lives once, in `skills/ce-doc-review/references/dispatch.md` "Where run files go", so it has no parity fixture; add one only when a second skill copies the block. Its cross-model peer jobs land inside the evidence folder through `CE_PEER_JOBS_ROOT="$RUN_DIR"` and `start --no-sweep`, which leaves the byte-identical `peer-job-runner.py` untouched. A run-id folder under a feature's `evidence/` is never swept by a later run.
 
 For the second row, ce-plan and ce-brainstorm now share one rule block, marked `<!-- ce-research-dir:start -->` / `<!-- ce-research-dir:end -->`:
 

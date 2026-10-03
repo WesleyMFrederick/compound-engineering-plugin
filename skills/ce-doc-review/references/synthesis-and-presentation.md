@@ -263,6 +263,9 @@ Residual concerns:
 Deferred questions:
 - <question> (<source>)
 
+Failed reviewers:
+- <reviewer or cross-model lens>: <failure in one line, with the provider's reason when known>
+
 Dropped: N (anchors 0/25 suppressed)
 Restated: N (residual/deferred items suppressed as duplicates of actionable findings)
 
@@ -323,6 +326,8 @@ During synthesis, discard any finding that recommends deleting or removing a CE 
 ## Phase 5: Return to the Caller
 
 Return "Review complete" with the completion report or the non-interactive result. A finished review does not need a terminal question. When nested, "Review complete" ends this skill, not the turn: the caller runs in this same session, and its next step follows the report. Do not start a nested planning or execution workflow merely because the review is complete.
+
+Before returning, save that same completion report or non-interactive result as a file. When the reviewed document sits in a feature folder, write it to `<abs feature>/evidence/doc-review-<run-id>.md`, beside the run's evidence folder from `references/dispatch.md`, and name the path in the reply. When there is no feature folder, save it in the temp run folder and say the report was not kept with the document.
 
 For standalone use, a useful next step may be named without a blocking menu. A requirements-only unified plan or legacy standalone requirements doc routes to `ce-plan`; an implementation-ready unified plan or legacy implementation plan routes to `ce-work`. Invoke that next skill only when the user's existing request authorizes it. Review completion alone does not authorize new work.
 

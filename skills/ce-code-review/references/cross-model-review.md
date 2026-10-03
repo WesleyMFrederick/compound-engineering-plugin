@@ -49,14 +49,16 @@ Resolve the preference in this order:
 
 Before any content is sent, resolve the target to one concrete installed route, announce it, and pass it as `CROSS_MODEL_FIXED_ROUTE`. `CROSS_MODEL_PEERS` is an optional egress restriction, not a required approval. When it is set, every recipient (target and intermediary) must be allowed by it under the alias rule below, and a recipient it does not allow is a named skip. Otherwise, when it is unset or empty, no recipient is filtered and the pass proceeds; invoking this skill plus the disclosure made before sending is the approval. Do not inspect the worker source to rediscover this; it implements exactly this contract. `CROSS_MODEL_FIXED_ROUTE` accepts exactly these tokens. The worker refuses anything else and writes no artifact, including route-shaped guesses like `codex-cli`:
 
-| Target | Route token(s) |
-|--------|----------------|
-| `codex` | `codex` |
-| `claude` | `claude` |
-| `grok` | `grok-cli` (native CLI) or `grok-cursor` (via Cursor intermediary) |
-| `cursor` | `cursor` |
-| `composer` | `composer` |
-| `opencode` | `opencode` |
+| Target | Route token(s) | Carried by |
+|--------|----------------|------------|
+| `codex` | `codex` | omp when `omp` is on PATH, else the codex CLI |
+| `claude` | `claude` | omp when `omp` is on PATH, else the claude CLI |
+| `grok` | `grok-cli` (native CLI) or `grok-cursor` (via Cursor intermediary) | the named CLI |
+| `cursor` | `cursor` | cursor-agent |
+| `composer` | `composer` | cursor-agent |
+| `opencode` | `opencode` | opencode |
+
+The worker picks the carrier, not the host: the route token stays `codex` or `claude` either way. omp sends the diff to the same provider through the user's own omp login, with only its read tool and no saved session, so it adds no recipient. Its run reports tokens and cost, which the worker records in the artifact's `usage` field; the native CLIs leave `usage` null. The worker's `peer run:` log line names the carrier (`via=omp (...)` or `via=native ... CLI`); repeat it when you announce the route.
 
 The host harness does not choose the Grok route. Target `grok` binds `grok-cli` when that CLI is installed. Bind `grok-cursor` only when the user asked for Grok through Cursor, or when the grok CLI is absent and Cursor is a sanctioned recipient.
 

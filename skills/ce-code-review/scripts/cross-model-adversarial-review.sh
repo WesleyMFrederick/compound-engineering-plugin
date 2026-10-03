@@ -35,10 +35,11 @@
 #   <run-dir>       an existing dir; output -> <run-dir>/adversarial-<provider>.json
 #
 # Test/introspection mode (no model call, no side effects):
-#   cross-model-adversarial-review.sh --emit-adapter <route>
+#   cross-model-adversarial-review.sh --emit-adapter <route> [native|omp]
 #     prints the exact argv the given route would run (route in:
-#     codex | claude | grok-cli | grok-cursor | composer). Both this mode and the
-#     live run build their argv from adapter_argv(), so route-safety tests
+#     codex | claude | grok-cli | grok-cursor | composer) over the named
+#     transport (default native; omp applies to codex and claude only). Both this
+#     mode and the live run build their argv from adapter_argv(), so route-safety tests
 #     assert on the same command string the peer actually runs.
 #
 # Self-locates its sibling reference files via BASH_SOURCE (NOT the CWD, which is
@@ -89,6 +90,35 @@ M_GROK="grok-4.7"              # grok CLI             (--effort xhigh)
 M_GROK_CURSOR="grok-4.7-xhigh" # cursor-agent --list-models; 4.7 has no cursor- prefix, effort is in the id
 M_COMPOSER="composer-2.5-fast" # cursor-agent composer (no high tier; -fast is the ceiling)
 
+# omp (oh-my-pi) carries the codex and claude targets whenever it is on PATH:
+# it reaches the same provider through the user's own omp login, and its JSON
+# events report tokens and cost. The vendor CLI runs only when omp is absent.
+# Model ids stay the M_* constants above, namespaced by omp's provider id.
+PEER_TRANSPORT="native"   # set per run by run_provider: native | omp
+PEER_USAGE=""             # compact JSON usage from the omp route, else empty
+omp_provider() {   # <route> -> omp provider id, empty when omp does not carry the route
+  case "$1" in
+    codex)  printf 'openai-codex' ;;
+    claude) printf 'anthropic' ;;
+  esac
+}
+route_transport() {   # <route> -> omp | native
+  if [ -n "$(omp_provider "$1")" ] && command -v omp >/dev/null 2>&1; then printf 'omp'; else printf 'native'; fi
+}
+omp_model() {   # <route> -> omp model id: <omp provider>/<route model>
+  local model; model="$(route_model "$1")"
+  case "$model" in */*) printf '%s' "$model" ;; *) printf '%s/%s' "$(omp_provider "$1")" "$model" ;; esac
+}
+peer_harness() {   # <route> -> harness that carried this run (route_harness stays byte-identical across scripts)
+  if [ "$PEER_TRANSPORT" = "omp" ] && [ -n "$(omp_provider "$1")" ]; then printf 'omp'; else route_harness "$1"; fi
+}
+omp_argv() {   # <route>; read-only tools (in-tree context), sessionless, no user extensions/skills/rules; prompt on stdin
+  local thinking; thinking="$(route_effort "$1")"
+  case "$thinking" in none) thinking=off ;; ultra) thinking=max ;; esac
+  printf '%s\0' omp -p --no-session --mode json --model "$(omp_model "$1")" --thinking "$thinking" \
+    --tools read --no-extensions --no-skills --no-rules --no-lsp --no-title
+}
+
 route_effort() {   # <route> -> requested effort: the override where the route takes one, else editorial
   if [ -n "${CROSS_MODEL_EFFORT_OVERRIDE:-}" ]; then
     case "$1" in
@@ -112,7 +142,7 @@ route_effort() {   # <route> -> requested effort: the override where the route t
 
 route_receipt_supported() {
   case "$1" in
-    claude) printf 'true' ;;
+    claude) if [ "$PEER_TRANSPORT" = "omp" ]; then printf 'false'; else printf 'true'; fi ;;
     *) printf 'false' ;;
   esac
 }
@@ -236,6 +266,7 @@ extract_model_receipt() {   # <route>; reads the envelope in $PEERLOG, sets MODE
 # NEVER emit: codex without `-s read-only`; grok `--always-approve` /
 # `--permission-mode bypassPermissions`; cursor-agent `-f` / `--force` / `--yolo`.
 adapter_argv() {
+  if [ "$PEER_TRANSPORT" = "omp" ] && [ -n "$(omp_provider "$1")" ]; then omp_argv "$1"; return; fi
   case "$1" in
     codex)
       printf '%s\0' codex exec - -C "$PEER_WORKDIR" --skip-git-repo-check -s read-only --json \
@@ -355,6 +386,10 @@ if [ "${1:-}" = "--emit-adapter" ]; then
   OUT="<run-dir>/adversarial-<provider>.json"
   PROMPT_FILE="<prompt-file>"; SCHEMA_REF="<schema>"
   route="${2:-}"
+  case "${3:-native}" in
+    native|omp) PEER_TRANSPORT="${3:-native}" ;;
+    *) echo "unknown transport '${3:-}' (want native|omp)" >&2; exit 2 ;;
+  esac
   validate_model_override "$route" 2>/dev/null || { echo "model override '${CROSS_MODEL_MODEL_OVERRIDE:-}' not compatible with route '$route'" >&2; exit 2; }
   validate_effort_override "$route" 2>/dev/null || { echo "effort override '${CROSS_MODEL_EFFORT_OVERRIDE:-}' not compatible with route '$route'" >&2; exit 2; }
   adapter_argv "$route" >/dev/null 2>&1 || { echo "unknown route '$route' (want codex|claude|grok-cli|grok-cursor|cursor|composer|opencode)" >&2; exit 2; }
@@ -431,8 +466,8 @@ fi
 
 provider_available() {
   case "$1" in
-    codex)    command -v codex >/dev/null 2>&1 ;;
-    claude)   command -v claude >/dev/null 2>&1 ;;
+    codex)    command -v codex >/dev/null 2>&1 || command -v omp >/dev/null 2>&1 ;;
+    claude)   command -v claude >/dev/null 2>&1 || command -v omp >/dev/null 2>&1 ;;
     grok)     command -v grok >/dev/null 2>&1 || { cursor_egress_ok && command -v cursor-agent >/dev/null 2>&1; } ;;
     cursor)   command -v cursor-agent >/dev/null 2>&1 ;;
     composer) command -v cursor-agent >/dev/null 2>&1 ;;
@@ -1064,20 +1099,59 @@ parse_opencode_events() {  # <logfile> <outfile>
   return "$st"
 }
 
+# omp --mode json streams NDJSON events; the final agent_end event carries every
+# message, and the last assistant message holds the answer, stopReason, and usage.
+# Records usage (tokens, cost) in PEER_USAGE and out.log whether or not the turn
+# succeeded, so a failed peer still reports what it spent.
+parse_omp_events() {   # <logfile> <outfile>
+  local msg stop text tmp st
+  msg="$(jq -cs '[.[] | select(.type=="agent_end") | .messages[]? | select(.role=="assistant")] | last // empty' "$1" 2>/dev/null)" || msg=""
+  [ -n "$msg" ] || return 1
+  PEER_USAGE="$(printf '%s' "$msg" | jq -c '.usage | select(type=="object") | {input, output, cacheRead, cacheWrite, totalTokens, cost: (.cost.total // null)}' 2>/dev/null)" || PEER_USAGE=""
+  [ -n "$PEER_USAGE" ] && log "peer usage: $(printf '%s' "$PEER_USAGE" | jq -r '"tokens=\(.totalTokens) (input \(.input), output \(.output), cache read \(.cacheRead), cache write \(.cacheWrite)) cost=$\(.cost)"' 2>/dev/null)"
+  stop="$(printf '%s' "$msg" | jq -r '.stopReason // ""' 2>/dev/null)"
+  case "$stop" in
+    stop|end_turn|"") ;;
+    *) log "omp peer turn ended with stopReason '$stop': $(printf '%s' "$msg" | jq -r '.errorMessage // "no error message"' 2>/dev/null)"; return 1 ;;
+  esac
+  text="$(printf '%s' "$msg" | jq -r '[.content[]? | select(.type=="text") | .text] | join("")' 2>/dev/null)" || text=""
+  [ -n "$text" ] || return 1
+  printf '%s' "$text" | jq -e 'select((.findings|type)=="array")' > "$2" 2>/dev/null && return 0
+  tmp="$(mktemp "${TMPDIR:-/tmp}/ce-omp-text-XXXXXX")" || return 1
+  printf '%s' "$text" > "$tmp"
+  recover_findings_json "$tmp" "$2"
+  st=$?
+  rm -f "$tmp"
+  return "$st"
+}
+
 attempt_route() {
   local provider="$1" route="$2" note
   local attempt_hard="${ATTEMPT_HARD_SECS:-}"
   [ -n "$attempt_hard" ] || attempt_hard="$(route_hard_budget "$route")"
-  PROVIDER_OUTCOME="ok"
+  PROVIDER_OUTCOME="ok"; PEER_USAGE=""
   : > "$PEERLOG"; : > "$PEERERR"; rm -f "$RAW_OUT"
   build_cmd "$route"
+  local harness
+  if [ "$PEER_TRANSPORT" = "omp" ]; then harness="omp ($(omp_model "$route"))"; else harness="native $(route_harness "$route") CLI"; fi
   case "$route" in
     codex|claude|grok-cli) note="$(route_model "$route") (effort $(route_effort "$route"))" ;;
     grok-cursor|composer)  note="$(route_model "$route")" ;;
     cursor)                note="auto (serving model unverified)" ;;
     opencode)              note="auto (serving model unverified)" ;;
   esac
-  log "peer run: provider=$provider route=$route model=$note lens=adversarial read-only in-tree (idle ${IDLE_SECS}s / attempt hard ${attempt_hard}s); reviewed code/diff may egress to this provider"
+  log "peer run: provider=$provider route=$route via=$harness model=$note lens=adversarial read-only in-tree (idle ${IDLE_SECS}s / attempt hard ${attempt_hard}s); reviewed code/diff may egress to this provider"
+  if [ "$PEER_TRANSPORT" = "omp" ]; then
+    # omp -p reads the prompt from stdin (no ARG_MAX limit) and streams events, so the idle guard applies.
+    compose_prompt_embedded
+    run_timeout_cmd "$PROMPT_FILE" "$attempt_hard" idle
+    classify_route_output
+    # Usage is recorded even when the turn failed; the served-model receipt stays unverified.
+    parse_omp_events "$PEERLOG" "$RAW_OUT" || RUN_SUCCEEDED=false
+    MODEL_ACTUAL="unverified"
+    [ "$RUN_SUCCEEDED" = true ] || rm -f "$RAW_OUT"
+    return 0
+  fi
   case "$route" in
     codex)
       compose_prompt_codex
@@ -1152,6 +1226,7 @@ run_provider() {
     return 0
   fi
   primary="$fixed"
+  PEER_TRANSPORT="$(route_transport "$primary")"
   PY_BIN="$(resolve_python)"
   [ -n "$PY_BIN" ] || { log "working Python 3 interpreter required for peer outcome classification; skipping"; rm -f "$OUT"; return 0; }
   if ! validate_turn_limit "$primary"; then
@@ -1200,10 +1275,10 @@ run_provider() {
     _independent=false
     [ "$HOST_PROVIDER" != "unknown" ] && [ "$_target_family" != "unknown" ] && [ "$HOST_PROVIDER" != "$_target_family" ] && _independent=true
     if jq --arg r "adversarial-$provider" --arg route "$ACTUAL_ROUTE" \
-         --arg target "$provider" --arg harness "$(route_harness "$ACTUAL_ROUTE")" \
+         --arg target "$provider" --arg harness "$(peer_harness "$ACTUAL_ROUTE")" \
          --arg family "$_target_family" --argjson independent "$_independent" \
          --arg mreq "$(route_model "$ACTUAL_ROUTE")" --arg mact "$MODEL_ACTUAL" \
-         --arg ereq "$(route_effort "$ACTUAL_ROUTE")" \
+         --arg ereq "$(route_effort "$ACTUAL_ROUTE")" --argjson usage "${PEER_USAGE:-null}" \
          --argjson receipt "$(route_receipt_supported "$ACTUAL_ROUTE")" \
          'if (.findings|type)=="array"
           then { reviewer: $r,
@@ -1225,7 +1300,8 @@ run_provider() {
                      then .first_evidence = .evidence[0]
                      else . end ],
                  residual_risks: (.residual_risks // []),
-                 testing_gaps: (.testing_gaps // []) }
+                 testing_gaps: (.testing_gaps // []),
+                 usage: $usage }
           else empty end' \
          "$RAW_OUT" > "$_norm" 2>/dev/null; then
       mv "$_norm" "$OUT"

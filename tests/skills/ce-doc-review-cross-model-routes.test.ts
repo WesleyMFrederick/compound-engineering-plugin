@@ -1579,3 +1579,117 @@ describe("cross-model-doc-review argv integrity (multiline --json-schema)", () =
     expect(readFileSync(capFile, "utf8")).toContain("UNIQUE_DOC_MARKER_9x7")
   })
 })
+
+describe("cross-model-doc-review omp transport", () => {
+  // Stub omp: records argv and stdin, then replays a canned NDJSON event stream.
+  const OMP_STUB =
+    `#!/bin/sh\nprintf '%s\\n' "$@" > "$ARGV_CAPTURE"\ncat > "$PROMPT_CAPTURE"\ncat "$OMP_EVENTS"\n`
+
+  function ompEvents(assistant: Record<string, unknown>): string {
+    const root = mkTempRoot("xmodel-omp-events-")
+    const file = path.join(root, "events.jsonl")
+    const lines = [
+      { type: "session" },
+      { type: "agent_start" },
+      { type: "agent_end", isTerminal: true, messages: [{ role: "user", content: [] }, assistant] },
+    ]
+    writeFileSync(file, lines.map((l) => JSON.stringify(l)).join("\n") + "\n")
+    return file
+  }
+
+  const USAGE = {
+    input: 1866, output: 9, cacheRead: 0, cacheWrite: 0, totalTokens: 1875,
+    cost: { input: 0.0001866, output: 0.0000045, cacheRead: 0, cacheWrite: 0, total: 0.0001911 },
+  }
+
+  function runOmp(installed: string[], assistant: Record<string, unknown>) {
+    const { env } = sandbox(installed, OMP_STUB)
+    const cap = mkTempRoot("xmodel-omp-cap-")
+    const doc = makeDoc("# Plan\nUNIQUE_OMP_DOC_MARKER\n")
+    const runDir = makeRunDir()
+    const r = run(["claude", "codex", "adversarial", doc, "plan", "none", runDir], runDir, {
+      ...env,
+      ARGV_CAPTURE: path.join(cap, "argv"),
+      PROMPT_CAPTURE: path.join(cap, "stdin"),
+      OMP_EVENTS: ompEvents(assistant),
+    })
+    const argvFile = path.join(cap, "argv")
+    return {
+      r,
+      runDir,
+      argv: existsSync(argvFile) ? readFileSync(argvFile, "utf8").trim().split("\n") : [],
+      stdin: existsSync(path.join(cap, "stdin")) ? readFileSync(path.join(cap, "stdin"), "utf8") : "",
+    }
+  }
+
+  test("Given omp on PATH, When the codex target runs, Then omp carries it tool-less and sessionless with the openai-codex model", () => {
+    // Given omp and the codex CLI both installed
+    // When the codex route runs
+    const { r, argv, stdin } = runOmp(["omp", "codex"], {
+      role: "assistant",
+      content: [{ type: "text", text: '{"reviewer":"adversarial","findings":[]}' }],
+      usage: USAGE,
+      stopReason: "stop",
+    })
+    // Then omp is invoked, not codex, with least-privilege flags and the prompt on stdin
+    expect(argv[0]).toBe("-p")
+    expect(argv[argv.indexOf("--model") + 1]).toBe("openai-codex/gpt-6-luna")
+    expect(argv[argv.indexOf("--mode") + 1]).toBe("json")
+    expect(argv).toContain("--no-tools")
+    expect(argv).toContain("--no-session")
+    expect(argv).not.toContain("--tools")
+    expect(stdin).toContain("UNIQUE_OMP_DOC_MARKER")
+    expect(r.stderr).toContain("via=omp (openai-codex/gpt-6-luna)")
+  }, 20_000)
+
+  test("Given an omp run, When it finishes, Then the fold-in records omp as harness and its tokens and cost", () => {
+    // Given omp returns findings with usage
+    // When the run normalizes the output
+    const { r, runDir } = runOmp(["omp"], {
+      role: "assistant",
+      content: [{ type: "text", text: '```json\n{"reviewer":"adversarial","findings":[{"section":"X","title":"t"}]}\n```' }],
+      usage: USAGE,
+      stopReason: "stop",
+    })
+    // Then the fold-in carries the usage and names omp as the harness
+    expect(r.files).toContain("adversarial-codex.json")
+    const out = JSON.parse(readFileSync(path.join(runDir, "adversarial-codex.json"), "utf8"))
+    expect(out.cross_model_route).toBe("codex")
+    expect(out.cross_model_harness).toBe("omp")
+    expect(out.findings).toHaveLength(1)
+    expect(out.usage).toEqual({ input: 1866, output: 9, cacheRead: 0, cacheWrite: 0, totalTokens: 1875, cost: 0.0001911 })
+    expect(r.stderr).toContain("peer usage: tokens=1875")
+  }, 20_000)
+
+  test("Given an omp turn that ends in error, When it is parsed, Then no fold-in is written but usage and the error are logged", () => {
+    // Given omp ends the turn with an error after spending tokens
+    // When the run finishes
+    const { r } = runOmp(["omp"], {
+      role: "assistant",
+      content: [],
+      usage: USAGE,
+      stopReason: "error",
+      errorMessage: "usage limit reached",
+    })
+    // Then nothing folds in, and the spend and reason are still visible
+    expect(r.files).not.toContain("adversarial-codex.json")
+    expect(r.stderr).toContain("peer usage: tokens=1875")
+    expect(r.stderr).toContain("usage limit reached")
+  }, 20_000)
+
+  test("Given omp absent, When the codex target runs, Then the native codex CLI carries it and usage stays null", () => {
+    // Given only the codex CLI installed
+    const codexStub =
+      `#!/bin/sh\ncat >/dev/null\nprintf '%s' '{"reviewer":"adversarial","findings":[]}'\n`
+    const { env } = sandbox(["codex"], codexStub)
+    const doc = makeDoc()
+    const runDir = makeRunDir()
+    // When the codex route runs
+    const r = run(["claude", "codex", "adversarial", doc, "plan", "none", runDir], runDir, env)
+    // Then the native route ran and the artifact says so
+    expect(r.stderr).toContain("via=native codex CLI")
+    const out = JSON.parse(readFileSync(path.join(runDir, "adversarial-codex.json"), "utf8"))
+    expect(out.cross_model_harness).toBe("codex")
+    expect(out.usage).toBeNull()
+  }, 20_000)
+})

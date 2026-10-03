@@ -2092,3 +2092,64 @@ describe("cross-model-adversarial-review argv integrity", () => {
     expect(prompt).toContain("untrusted diff data")
   })
 })
+
+describe("cross-model-adversarial-review omp transport", () => {
+  // Stub omp: records argv, then replays a canned NDJSON event stream.
+  const OMP_STUB =
+    `#!/bin/sh\nprintf '%s\\n' "$@" > "$ARGV_CAPTURE"\ncat >/dev/null\ncat "$OMP_EVENTS"\n`
+  const USAGE = {
+    input: 1866, output: 9, cacheRead: 0, cacheWrite: 0, totalTokens: 1875,
+    cost: { input: 0.0001866, output: 0.0000045, cacheRead: 0, cacheWrite: 0, total: 0.0001911 },
+  }
+
+  function runOmp(installed: string[]) {
+    const root = mkTempRoot("xmodel-cr-omp-")
+    const events = path.join(root, "events.jsonl")
+    const assistant = {
+      role: "assistant",
+      content: [{ type: "text", text: '{"reviewer":"adversarial","findings":[{"title":"t"}],"residual_risks":[],"testing_gaps":[]}' }],
+      usage: USAGE,
+      stopReason: "stop",
+    }
+    writeFileSync(events, JSON.stringify({ type: "agent_end", messages: [assistant] }) + "\n")
+    const { env } = sandbox(installed, OMP_STUB)
+    const runDir = makeRunDir()
+    const r = run(["claude", "codex", "HEAD", runDir], runDir, {
+      ...env,
+      ARGV_CAPTURE: path.join(root, "argv"),
+      OMP_EVENTS: events,
+    })
+    const argvFile = path.join(root, "argv")
+    return { r, runDir, argv: existsSync(argvFile) ? readFileSync(argvFile, "utf8").trim().split("\n") : [] }
+  }
+
+  test("Given omp on PATH, When the codex target runs, Then omp carries it read-only with usage recorded", () => {
+    // Given omp and the codex CLI both installed
+    // When the codex route runs
+    const { r, runDir, argv } = runOmp(["omp", "codex"])
+    // Then omp ran with only the read tool, and the fold-in records harness and usage
+    expect(argv[argv.indexOf("--model") + 1]).toBe("openai-codex/gpt-6-luna")
+    expect(argv[argv.indexOf("--tools") + 1]).toBe("read")
+    expect(argv).toContain("--no-session")
+    expect(r.stderr).toContain("via=omp (openai-codex/gpt-6-luna)")
+    const out = JSON.parse(readFileSync(path.join(runDir, "adversarial-codex.json"), "utf8"))
+    expect(out.cross_model_harness).toBe("omp")
+    expect(out.usage.totalTokens).toBe(1875)
+    expect(out.usage.cost).toBe(0.0001911)
+  }, 20_000)
+
+  test("Given omp absent, When the codex target runs, Then the native codex CLI carries it", () => {
+    // Given only the codex CLI installed
+    const codexStub =
+      `#!/bin/sh\ncat >/dev/null\nprintf '%s' '{"reviewer":"adversarial","findings":[],"residual_risks":[],"testing_gaps":[]}'\n`
+    const { env } = sandbox(["codex"], codexStub)
+    const runDir = makeRunDir()
+    // When the codex route runs
+    const r = run(["claude", "codex", "HEAD", runDir], runDir, env)
+    // Then the native route ran and usage stays null
+    expect(r.stderr).toContain("via=native codex CLI")
+    const out = JSON.parse(readFileSync(path.join(runDir, "adversarial-codex.json"), "utf8"))
+    expect(out.cross_model_harness).toBe("codex")
+    expect(out.usage).toBeNull()
+  }, 20_000)
+})
