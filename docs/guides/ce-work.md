@@ -4,6 +4,8 @@
 
 `ce-work` is the execution skill. Give it a plan, or a bare prompt for smaller work, and it implements against the plan's guardrails, runs tests as it goes, picks an implementation engine and a safe scheduling strategy, runs quality gates, and hands off to a commit + PR flow. Implementation can stay on the current host or route bounded units to another model or harness, but the host always owns verification, canonical commits, and shipping.
 
+It runs only when you or a calling skill name it (`disable-model-invocation: true`). A plain "build this" no longer starts it, so an agent cannot jump past your plan step into implementation, review, and shipping. On omp, `/skill:ce-work` starts it, and `lfg` still reaches it by name; Claude Code's flag blocks that call.
+
 The plan is a decision artifact: authoritative for scope, decisions, units, and tests. `ce-work` figures out the actual implementation itself. This is the HOW phase that `ce-plan` deliberately does not pre-write.
 
 After code review, the host resolves verified fixes within the requested work and checks the result. The handoff reports changes, verification, and worthwhile unresolved work. Reasons for rejecting review suggestions stay with the review evidence; they do not become a new list of concerns for the user.

@@ -6,6 +6,8 @@
 
 Use it when you want a software task carried from a description, a bug report, or a plan to an open PR and you are fine not inspecting each stage. It never pauses for approval, which is why it is the wrong tool for in-the-loop work. If you want to approve the plan, the diff, or the review findings yourself, run those skills one at a time. The one place it can ask is product shaping: when a request has more than one plausible product reading and a human is present, it runs `ce-brainstorm` first, because that dialogue is how the right thing gets built.
 
+It runs only when you or a calling skill name it (`disable-model-invocation: true`). Asking for work hands-off does not start it; invoke `/skill:lfg` on omp.
+
 It works best after `/ce-brainstorm`, because the pipeline can then plan against real requirements instead of a one-line prompt. A software brainstorm's wrap-up offers "Ship it autonomously with `lfg`" when a unified plan artifact exists and nothing is still blocked on `Resolve Before Planning`.
 
 ---

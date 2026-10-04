@@ -199,6 +199,12 @@ const EXPECTED_USER_INVOKED_SKILLS = new Set([
   // wtf: answers a user who says they did not follow something. No skill or
   // pipeline calls it, and model-routing it would re-explain replies unasked.
   "wtf",
+  // ce-work and lfg (personal): they start the build-review-ship chain. Model
+  // routing let a helper given a plain build request jump past the user's plan
+  // step, so only the user starts them. lfg still reaches ce-work by name on
+  // omp, where a hidden skill stays loadable; Claude Code's flag blocks that call.
+  "ce-work",
+  "lfg",
 ])
 
 const REQUIRED_MODEL_INVOKED_CALLEES = new Set([
@@ -221,9 +227,7 @@ const REQUIRED_MODEL_INVOKED_CALLEES = new Set([
   "ce-simplify-code",
   "ce-strategy",
   "ce-test-browser",
-  "ce-work",
   "ce-worktree",
-  "lfg",
 ])
 
 // ---------------------------------------------------------------------------
