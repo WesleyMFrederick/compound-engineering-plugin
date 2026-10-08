@@ -65,6 +65,7 @@
   composer.className = "ce-annotate-composer"
   composer.hidden = true
   composer.innerHTML = `
+    <div class="ce-annotate-grip" title="Drag to move this note">Drag to move</div>
     <textarea class="ce-annotate-comment" rows="3" placeholder="What should change here?"></textarea>
     <div class="ce-annotate-actions">
       <button type="submit" class="ce-annotate-submit" disabled>Submit</button>
@@ -82,6 +83,7 @@
   const submit = composer.querySelector(".ce-annotate-submit")
   const cancel = composer.querySelector(".ce-annotate-cancel")
   const error = composer.querySelector(".ce-annotate-error")
+  const grip = composer.querySelector(".ce-annotate-grip")
 
   const overlaySession = document.currentScript?.getAttribute("data-ce-session") || ""
   const STATE_KEY = overlaySession ? `ce-annotate-state:${overlaySession}` : "ce-annotate-state"
@@ -112,7 +114,6 @@
   function persistState() {
     const state = {
       commentToolOn,
-      sessionEnded,
       pins,
       annotationStates,
       draft: draft
@@ -161,10 +162,6 @@
       }
     }
     dropAppliedPins()
-    if (saved.sessionEnded) {
-      markEnded()
-      return true
-    }
     if (saved.commentToolOn && !agentHasBatch()) setCommentTool(true)
     if (
       saved.draft &&
@@ -432,6 +429,28 @@
     composer.style.left = `${Math.max(0, Math.min(x + 12, window.innerWidth - width))}px`
     composer.style.top = `${Math.max(0, Math.min(y + 12, window.innerHeight - height))}px`
   }
+
+  // The composer opens beside the click and may cover what the comment is
+  // about; the grip lets the explorer move it. Pointer events cover mouse and touch.
+  grip.addEventListener("pointerdown", (event) => {
+    event.preventDefault()
+    const box = composer.getBoundingClientRect()
+    const offsetX = event.clientX - box.left
+    const offsetY = event.clientY - box.top
+    grip.setPointerCapture(event.pointerId)
+    const move = (moveEvent) => {
+      composer.style.left = `${Math.max(0, Math.min(moveEvent.clientX - offsetX, window.innerWidth - box.width))}px`
+      composer.style.top = `${Math.max(0, Math.min(moveEvent.clientY - offsetY, window.innerHeight - box.height))}px`
+    }
+    const end = () => {
+      grip.removeEventListener("pointermove", move)
+      grip.removeEventListener("pointerup", end)
+      grip.removeEventListener("pointercancel", end)
+    }
+    grip.addEventListener("pointermove", move)
+    grip.addEventListener("pointerup", end)
+    grip.addEventListener("pointercancel", end)
+  })
 
   function setCommentTool(on) {
     commentToolOn = on
