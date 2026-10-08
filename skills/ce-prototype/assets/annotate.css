@@ -181,6 +181,16 @@
   font: 13px/1.4 system-ui, -apple-system, sans-serif;
 }
 
+.ce-annotate-grip {
+  margin: -4px 0 6px;
+  padding: 4px 0;
+  color: #57606a;
+  font-size: 11px;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
 .ce-annotate-comment {
   width: 100%;
   box-sizing: border-box;
