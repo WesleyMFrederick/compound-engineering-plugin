@@ -111,10 +111,10 @@ If the helper path is unavailable or the platform cannot display a local URL cle
 
 The server is the same everywhere; only the launch mode changes.
 
-- **Claude Code / Claude desktop app:** detached `start` is the default path. If the app opens localhost URLs, show the returned URL and continue. If the browser surface is unavailable, use the text path.
+- **Claude Code / Claude desktop app:** detached `start` is the default path. The helper binds to this Mac's Tailscale address by default and prints that URL; hand that URL over, never a `localhost` link. Pass `--host 127.0.0.1` only for a check that stays on this machine. Binding the Tailscale address exposes the run directory to the tailnet only; annotation and wait routes stay token-gated. If the app opens the returned URL, show it and continue. If the browser surface is unavailable, use the text path.
 - **Codex CLI / Codex app:** if detached processes are reaped or the URL dies after the tool call, use `start --foreground` through the platform's long-running/background terminal mechanism. If there is no stable browser surface, use the text path.
 - **Plain terminal UI:** print the returned URL for the user to open manually. If opening a browser would interrupt the flow, keep the decision in chat.
-- **Remote or containerized sessions:** if `localhost` is not reachable from the user's browser, start with `--host 0.0.0.0` and tell the user which host/port to open. That serves the run directory to anything that can reach the port, with no auth — do it only on a network the user trusts, and say so when you hand over the URL. If that cannot be made clear, use the text path.
+- **Remote or containerized sessions:** if the Tailscale address is not reachable from the user's browser, start with `--host 0.0.0.0` and tell the user which host/port to open. That serves the run directory to anything that can reach the port, with no auth — do it only on a network the user trusts, and say so when you hand over the URL. If that cannot be made clear, use the text path.
 
 Never force the visual path because a local server exists. The user chose visual to understand the decision faster; if the platform plumbing gets in the way, switch back to text.
 

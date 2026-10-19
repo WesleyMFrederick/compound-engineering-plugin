@@ -84,10 +84,10 @@ describe("ce-prototype protocol", () => {
     expect(ANNOTATION_LOOP_BODY).not.toMatch(/explorer writing in chat/)
     expect(PREVIEW_BODY).toMatch(/start --root "\$PROTO_DIR" --annotate/)
     expect(
-      /hand the explorer the helper's returned URL with only the host rewritten/.test(PREVIEW_BODY),
-      "A remote handoff rewrites only the host. The explorer URL is origin-only; visiting that origin sets the session cookie.",
+      /binds to this Mac's Tailscale address by default and prints that URL/.test(PREVIEW_BODY),
+      "The default handoff is the Tailscale URL the helper prints; visiting that origin sets the session cookie.",
     ).toBe(true)
-    expect(PREVIEW_BODY).toMatch(/Do not also hand localhost/)
+    expect(PREVIEW_BODY).toMatch(/Never hand the user a `localhost` link/)
     expect(PREVIEW_BODY).toMatch(/Do not print the token/)
     expect(PREVIEW_BODY).toMatch(/Wait talks the bind address with the file token/)
     expect(ANNOTATION_LOOP_BODY).toMatch(/Annotate pins a note/)

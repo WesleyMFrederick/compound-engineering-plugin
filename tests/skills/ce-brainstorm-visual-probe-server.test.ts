@@ -23,6 +23,18 @@ type RunResult = {
 
 const rootsToStop: string[] = []
 
+// Tests fetch http://localhost, so default to loopback: point the helper at a
+// tailscale binary that does not exist. Tailscale tests override this per start.
+const MISSING_TAILSCALE_BIN = path.join(os.tmpdir(), "ce-no-such-tailscale-bin")
+process.env.CE_LIGHT_WEB_TAILSCALE_BIN = MISSING_TAILSCALE_BIN
+
+async function tailscaleStub(output: string): Promise<string> {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "ce-tailscale-stub-"))
+  const bin = path.join(dir, "tailscale")
+  await fs.writeFile(bin, `#!/bin/sh\necho '${output}'\n`, { mode: 0o755 })
+  return bin
+}
+
 async function readJsonLine(stream: ReadableStream<Uint8Array> | null): Promise<Record<string, string | number | null>> {
   expect(stream).not.toBeNull()
   const reader = stream!.getReader()
@@ -83,6 +95,17 @@ afterEach(async () => {
 })
 
 describe("ce-brainstorm light-webserver.js", () => {
+  test("Given tailscale answers When started without --host Then it binds there and prints that URL", async () => {
+    // Given
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "ce-brainstorm-ts-"))
+    const bin = await tailscaleStub("127.0.0.1")
+    // When
+    const info = await startServer(root, [], { CE_LIGHT_WEB_TAILSCALE_BIN: bin })
+    // Then
+    expect(info.host).toBe("127.0.0.1")
+    expect(info.url).toBe(`http://127.0.0.1:${info.port}`)
+    expect((await fetch(String(info.url))).status).toBe(200)
+  })
   test("start serves the newest screen from a display-only local server", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "ce-visual-probe-server-"))
     const info = await startServer(root)
@@ -197,7 +220,7 @@ describe("ce-brainstorm light-webserver.js", () => {
 
   test("foreground start serves until stopped", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "ce-visual-probe-foreground-"))
-    const proc = Bun.spawn(["node", serverScript, "start", "--root", root, "--port", "0", "--foreground"], {
+    const proc = Bun.spawn(["node", serverScript, "start", "--root", root, "--port", "0", "--host", "127.0.0.1", "--foreground"], {
       stdout: "pipe",
       stderr: "pipe",
     })

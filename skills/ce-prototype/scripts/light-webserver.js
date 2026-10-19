@@ -10,6 +10,38 @@ const scriptPath = fileURLToPath(import.meta.url)
 const assetsDir = path.join(path.dirname(scriptPath), "..", "assets")
 const DEFAULT_HOST = "127.0.0.1"
 const DEFAULT_URL_HOST = "localhost"
+const IPV4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "[::1]", "localhost"])
+const WILDCARD_HOSTS = new Set(["0.0.0.0", "::", "[::]"])
+
+// The Mac's Tailscale IPv4, or null. Resolved once; any failure means none.
+let tailscaleIpCache
+function tailscaleIp() {
+  if (tailscaleIpCache !== undefined) return tailscaleIpCache
+  tailscaleIpCache = null
+  try {
+    const bin = process.env.CE_LIGHT_WEB_TAILSCALE_BIN || "tailscale"
+    const out = execFileSync(bin, ["ip", "-4"], { timeout: 2000, stdio: ["ignore", "pipe", "ignore"], encoding: "utf8" })
+    const first = out.split("\n").map((line) => line.trim()).find(Boolean)
+    const m = first && IPV4.exec(first)
+    if (m && m.slice(1).every((octet) => Number(octet) <= 255)) tailscaleIpCache = first
+  } catch {
+    // binary missing, nonzero exit, or timeout: no Tailscale address
+  }
+  return tailscaleIpCache
+}
+
+function bracketHost(host) {
+  return host.includes(":") && !host.startsWith("[") ? `[${host}]` : host
+}
+
+// Host to print in URLs for a given bind host.
+function urlHostFor(host) {
+  if (host === tailscaleIp()) return host
+  if (LOOPBACK_HOSTS.has(host)) return DEFAULT_URL_HOST
+  if (WILDCARD_HOSTS.has(host)) return tailscaleIp() ?? DEFAULT_URL_HOST
+  return bracketHost(host)
+}
 const IDLE_TIMEOUT_MS = Number(process.env.CE_LIGHT_WEB_IDLE_TIMEOUT_MS) || 30 * 60 * 1000
 const LIFECYCLE_CHECK_MS = Number(process.env.CE_LIGHT_WEB_LIFECYCLE_CHECK_MS) || 60 * 1000
 const WAIT_TIMEOUT_MS = Number(process.env.CE_LIGHT_WEB_WAIT_TIMEOUT_MS) || 30 * 1000
@@ -28,10 +60,12 @@ const HOST_HEADER = /^[A-Za-z0-9.\-]+(:\d{1,5})?$|^\[[0-9A-Fa-f:.]+\](:\d{1,5})?
 function usage() {
   return [
     "Usage:",
-    "  node light-webserver.js start --root <dir> [--host 127.0.0.1] [--port 0] [--foreground] [--owner-pid <pid>] [--annotate]",
+    "  node light-webserver.js start --root <dir> [--host <addr>] [--port 0] [--foreground] [--owner-pid <pid>] [--annotate]",
     "  node light-webserver.js stop --root <dir>",
     "  node light-webserver.js status --root <dir>",
     "  node light-webserver.js wait --root <dir>",
+    "",
+    "--host defaults to the Tailscale address when `tailscale ip -4` answers, else 127.0.0.1.",
   ].join("\n")
 }
 
@@ -39,7 +73,7 @@ function parseArgs(argv) {
   const command = argv[2]
   const options = {
     command,
-    host: DEFAULT_HOST,
+    host: undefined,
     port: 0,
     foreground: false,
     annotate: false,
@@ -69,6 +103,9 @@ function parseArgs(argv) {
   }
   if (!options.root) {
     throw new Error("--root is required")
+  }
+  if (options.host === undefined && (command === "start" || command === "serve")) {
+    options.host = tailscaleIp() ?? DEFAULT_HOST
   }
   if (!Number.isInteger(options.port) || options.port < 0 || options.port > 65535) {
     throw new Error("--port must be an integer from 0 to 65535")
@@ -888,7 +925,7 @@ async function serve(options) {
   function requestOrigin(req) {
     const host = req.headers.host
     if (typeof host === "string" && HOST_HEADER.test(host)) return `http://${host}`
-    return `http://${DEFAULT_URL_HOST}:${server.address().port}`
+    return `http://${urlHostFor(options.host)}:${server.address().port}`
   }
 
   function stampOverlayDocument(html, documentId) {
@@ -1165,7 +1202,7 @@ async function serve(options) {
     const address = server.address()
     const port = typeof address === "object" && address ? address.port : options.port
     cookieName = `ce-light-web-${port}`
-    const baseUrl = `http://${DEFAULT_URL_HOST}:${port}`
+    const baseUrl = `http://${urlHostFor(options.host)}:${port}`
     const info = {
       status: "running",
       root: options.root,

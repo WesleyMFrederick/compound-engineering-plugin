@@ -41,7 +41,7 @@ async function withServer(skill, run) {
   try {
     await fs.mkdir(path.join(root, "screens"))
     await fs.writeFile(path.join(root, "screens/index.html"), "<!doctype html><h1>Test screen</h1>")
-    server = launch(script, ["start", "--foreground", "--annotate", "--root", root, "--owner-pid", String(process.pid)])
+    server = launch(script, ["start", "--foreground", "--annotate", "--host", "127.0.0.1", "--root", root, "--owner-pid", String(process.pid)])
     server.child.stdout.resume()
     let info
     const deadline = Date.now() + 5000

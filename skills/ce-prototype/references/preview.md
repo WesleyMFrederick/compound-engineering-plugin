@@ -111,7 +111,7 @@ The fallback root takes the same shape under `/tmp/compound-engineering-<uid>/ce
 
 ## Handoff
 
-Pick the browser that will load the prototype — one surface. Hand it the origin it will actually request. The helper prints `http://localhost:<port>`. Use that when that browser is on this machine. When it is not, start with `--host 0.0.0.0` and hand the explorer the helper's returned URL with only the host rewritten to one they can reach. Rewrite only the host. Do not also hand localhost. Visiting that origin sets the session cookie. Wait talks the bind address with the file token. Do not print the token. Binding every interface serves the run directory to anything that can reach the port; annotation and wait routes stay token-gated — do it only on a network the user trusts, and say so when you hand over the URL.
+Pick the browser that will load the prototype — one surface. The user reads on another device, so the helper binds to this Mac's Tailscale address by default and prints that URL (`http://<tailscale-ip>:<port>`). Hand that URL over as printed. Never hand the user a `localhost` link. Pass `--host 127.0.0.1` only for a check that stays on this machine. Binding the Tailscale address exposes the run directory to the tailnet only; annotation and wait routes stay token-gated. If `tailscale ip -4` does not answer, the helper falls back to `127.0.0.1` and prints `localhost`; then say the link is local only. Visiting the origin sets the session cookie. Wait talks the bind address with the file token. Do not print the token.
 
 Keep the server alive the way this host actually does. Detached `start` is the default. If this host reaps detached processes or the URL dies after the tool call, append `--foreground` through its long-running terminal.
 
