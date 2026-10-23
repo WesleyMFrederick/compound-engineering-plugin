@@ -1,7 +1,8 @@
-import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "fs/promises"
+import { chmod, copyFile, mkdir, mkdtemp, readdir, readFile, realpath, rm, symlink, writeFile } from "fs/promises"
 import os from "os"
 import path from "path"
-import { describe, expect, setDefaultTimeout, test } from "bun:test"
+import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test"
+import { ACPX_PIN } from "../helpers/acpx-pin"
 import { isolatedGitEnv, knowledgeFile } from "./helpers/packs-fixtures"
 
 // check-health cases spawn bash + git + the packs resolver; under full-suite load
@@ -26,8 +27,9 @@ async function runCheckHealth(
   cwd: string,
   pathValue: string,
   extraEnv: Record<string, string> = {},
+  args: string[] = [],
 ): Promise<RunResult> {
-  const proc = Bun.spawn(["bash", checkHealthScript], {
+  const proc = Bun.spawn(["bash", checkHealthScript, ...args], {
     cwd,
     env: {
       ...process.env,
@@ -1165,5 +1167,213 @@ describe("ce-setup check-health pack drift note", () => {
       await rm(cache, { recursive: true, force: true })
       await rm(upstream, { recursive: true, force: true })
     }
+  })
+})
+
+describe("ce-setup check-health cross-model peers prerequisite", () => {
+  // A PATH with the system tools but no node, npx, or npm, so each test decides
+  // which of them exist regardless of what the host has installed.
+  let sandbox: string
+  let systemBin: string
+
+  beforeAll(async () => {
+    sandbox = await mkdtemp(path.join(os.tmpdir(), "ce-setup-health-node-"))
+    systemBin = path.join(sandbox, "system-bin")
+    await mkdir(systemBin)
+    for (const dir of ["/usr/bin", "/bin"]) {
+      for (const name of await readdir(dir).catch(() => [] as string[])) {
+        if (["node", "npx", "npm"].includes(name)) continue
+        // A name in both directories keeps the /usr/bin entry, as it would on PATH.
+        await symlink(path.join(dir, name), path.join(systemBin, name)).catch((error) => {
+          if (error.code !== "EEXIST") throw error
+        })
+      }
+    }
+  })
+
+  afterAll(async () => {
+    await rm(sandbox, { recursive: true, force: true })
+  })
+
+  async function runWithNode(
+    opts: { nodeVersion?: string; npx?: boolean; args?: string[] },
+  ): Promise<RunResult & { npxCalls: string[]; npxDirs: string[]; root: string }> {
+    const root = await mkdtemp(path.join(sandbox, "run-"))
+    const stubBin = path.join(root, "stub-bin")
+    const npxLog = path.join(root, "npx.log")
+    const writeStub = async (name: string, body: string) => {
+      await writeFile(path.join(stubBin, name), `#!/bin/sh\n${body}\n`)
+      await chmod(path.join(stubBin, name), 0o755)
+    }
+    await mkdir(stubBin)
+    if (opts.nodeVersion !== undefined) await writeStub("node", `echo '${opts.nodeVersion}'`)
+    if (opts.npx) await writeStub("npx", `echo "$*" >> '${npxLog}'; pwd -P >> '${npxLog}.pwd'`)
+    const result = await runCheckHealth(root, `${stubBin}:${systemBin}`, {}, opts.args)
+    const npxCalls = (await readFile(npxLog, "utf8").catch(() => "")).split("\n").filter(Boolean)
+    const npxDirs = (await readFile(`${npxLog}.pwd`, "utf8").catch(() => "")).split("\n").filter(Boolean)
+    return { ...result, npxCalls, npxDirs, root }
+  }
+
+  test.each(["24.17.0", "v22.13.0"])("Node %s with npx is available", async (version) => {
+    const result = await runWithNode({ nodeVersion: version, npx: true })
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout).toContain(`🟢  node -- cross-model peers (Node ${version.replace(/^v/, "")}, npx)`)
+  })
+
+  test.each(["20.11.0", "v22.12.1"])("Node %s is unavailable with the upgrade remedy", async (version) => {
+    const result = await runWithNode({ nodeVersion: version, npx: true })
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout).toContain("🟡  node -- unavailable: cross-model peers")
+    expect(result.stdout).toContain(`Node ${version.replace(/^v/, "")} is too old; cross-model peers need Node 22.13 or newer`)
+  })
+
+  test("an unreadable Node version is unavailable", async () => {
+    const result = await runWithNode({ nodeVersion: "garbage", npx: true })
+    expect(result.stdout).toContain("🟡  node -- unavailable: cross-model peers")
+    expect(result.stdout).toContain("cannot read the Node version")
+  })
+
+  test("Node without npx is unavailable", async () => {
+    const result = await runWithNode({ nodeVersion: "24.17.0" })
+    expect(result.stdout).toContain("🟡  node -- unavailable: cross-model peers")
+    expect(result.stdout).toContain("npx not found")
+  })
+
+  test("a health run without the warm flag fetches nothing", async () => {
+    const result = await runWithNode({ nodeVersion: "24.17.0", npx: true })
+    expect(result.exitCode).toBe(0)
+    expect(result.npxCalls).toEqual([])
+  })
+
+  test("the warm step caches exactly the pinned acpx and adapter specs", async () => {
+    const script = await readFile(checkHealthScript, "utf8")
+    const adapterSpecs = script.match(/^ACPX_ADAPTER_SPECS="([^"]+)"$/m)?.[1].split(" ") ?? []
+    const result = await runWithNode({ nodeVersion: "24.17.0", npx: true, args: ["--warm-acpx"] })
+
+    expect(result.exitCode).toBe(0)
+    expect(adapterSpecs.length).toBeGreaterThan(0)
+    expect(result.npxCalls).toEqual(
+      [`acpx@${ACPX_PIN}`, ...adapterSpecs].map((spec) => `--yes --package=${spec} -- node --version`),
+    )
+    expect(result.stdout).not.toContain("Optional capabilities")
+    // npx resolves packages from its working directory first, so the warm must
+    // not run from the user's project.
+    expect(result.npxDirs.length).toBe(result.npxCalls.length)
+    for (const dir of result.npxDirs) expect(dir.startsWith(await realpath(result.root))).toBe(false)
+  })
+
+  test("the warm step fetches nothing when the Node prerequisite is unmet", async () => {
+    const result = await runWithNode({ nodeVersion: "20.11.0", npx: true, args: ["--warm-acpx"] })
+    expect(result.exitCode).toBe(1)
+    expect(result.stdout).toContain("Cannot warm the npm cache")
+    expect(result.npxCalls).toEqual([])
+  })
+
+  test("pins the same acpx version as the peer workers, on one line each", async () => {
+    const script = await readFile(checkHealthScript, "utf8")
+    const versions = [...script.matchAll(/^ACPX_VERSION="([^"]+)"$/gm)].map((m) => m[1])
+    expect(versions).toEqual([ACPX_PIN])
+    expect(script.match(/^ACPX_ADAPTER_SPECS="[^"]+"$/gm)?.length).toBe(1)
+  })
+
+  test("setup offers the cache warm and runs it only on approval", async () => {
+    const [skill, reference] = await Promise.all([
+      readFile(path.join(repoRoot, "skills", "ce-setup", "SKILL.md"), "utf8"),
+      readFile(path.join(repoRoot, "skills", "ce-setup", "references", "acpx-cache-warm.md"), "utf8"),
+    ])
+    expect(skill).toContain("references/acpx-cache-warm.md")
+    expect(reference).toContain("--warm-acpx")
+    expect(reference).toMatch(/only (after|if) the user approves/i)
+  })
+})
+
+describe("ce-setup check-health Antigravity peer", () => {
+  const registry = "https://github.com/agentclientprotocol/registry/blob/main/antigravity-acp/agent.json"
+  const enabledAntigravity = "work_engine_mode: prefer\nwork_engine_preferences:\n  - harness: antigravity\n"
+
+  async function runAntigravity(
+    opts: { config?: string; runtime?: boolean; helperBeside?: boolean; explicitHelper?: boolean },
+  ): Promise<RunResult & { root: string }> {
+    const root = await mkdtemp(path.join(os.tmpdir(), "ce-setup-health-agy-"))
+    const stubBin = path.join(root, "stub-bin")
+    await mkdir(stubBin)
+    const writeExecutable = async (file: string) => {
+      await writeFile(file, "#!/bin/sh\nexit 0\n")
+      await chmod(file, 0o755)
+    }
+    if (opts.runtime) await writeExecutable(path.join(stubBin, "agy_acp_server.par"))
+    if (opts.helperBeside) await writeExecutable(path.join(stubBin, "localharness_external"))
+    const extraEnv: Record<string, string> = {}
+    if (opts.explicitHelper) {
+      const helper = path.join(root, "elsewhere", "localharness_external")
+      await mkdir(path.dirname(helper))
+      await writeExecutable(helper)
+      extraEnv.ANTIGRAVITY_HARNESS_PATH = helper
+    }
+    if (opts.config === undefined) {
+      await initGitRepo(root)
+    } else {
+      await initConfiguredRepo(root, opts.config)
+    }
+    try {
+      const result = await runCheckHealth(root, `${stubBin}:/usr/bin:/bin`, extraEnv)
+      return { ...result, root }
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  }
+
+  test("an antigravity work_engine_preferences entry validates clean", async () => {
+    const result = await runAntigravity({ config: enabledAntigravity, runtime: true, helperBeside: true })
+
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout).toContain("CE Work implementation engine: prefer -> antigravity@default")
+    expect(result.stdout).not.toContain("invalid harness")
+    expect(result.stdout).toContain("Project config healthy")
+  })
+
+  test("an antigravity effort outside low|medium|high warns with the allowed levels", async () => {
+    const result = await runAntigravity({ config: `${enabledAntigravity}work_engine_effort:\n  antigravity: xhigh\n` })
+
+    expect(result.stdout).toContain(
+      "work_engine_effort in config.local.yaml sets antigravity to 'xhigh'; Antigravity takes low, medium, or high",
+    )
+    expect(result.stdout).not.toContain("Project config healthy")
+  })
+
+  test("an antigravity effort within its levels adds no warning", async () => {
+    const result = await runAntigravity({ config: `${enabledAntigravity}work_engine_effort: {antigravity: "medium"}\n` })
+
+    expect(result.stdout).not.toContain("work_engine_effort")
+  })
+
+  test("a configured peer with no runtime on PATH reports the missing runtime and the download", async () => {
+    const result = await runAntigravity({ config: "cross_model_peer: antigravity\n" })
+
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout).toContain("🟡  antigravity -- unavailable: Gemini cross-model peer")
+    expect(result.stdout).toContain("agy_acp_server.par not found on PATH")
+    expect(result.stdout).toContain(registry)
+  })
+
+  test("the runtime on PATH with no helper reports the missing helper", async () => {
+    const result = await runAntigravity({ runtime: true })
+
+    expect(result.stdout).toContain("🟡  antigravity -- unavailable: Gemini cross-model peer")
+    expect(result.stdout).toContain(`localharness_external not found at ${path.join(result.root, "stub-bin", "localharness_external")}`)
+    expect(result.stdout).toContain(registry)
+  })
+
+  test("an explicit ANTIGRAVITY_HARNESS_PATH to a working helper is usable", async () => {
+    const result = await runAntigravity({ runtime: true, explicitHelper: true })
+
+    expect(result.stdout).toContain("🟢  antigravity -- Gemini cross-model peer (runtime and helper found)")
+    expect(result.stdout).not.toContain(registry)
+  })
+
+  test("says nothing about Antigravity when it is neither configured nor installed", async () => {
+    const result = await runAntigravity({ config: enabledAntigravity.replace("antigravity", "codex") })
+
+    expect(result.stdout).not.toMatch(/antigravity/i)
   })
 })

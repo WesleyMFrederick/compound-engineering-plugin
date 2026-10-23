@@ -29,8 +29,14 @@ function gitPathExists(ref: string, gitPath: string): boolean {
   return spawnSync("git", ["cat-file", "-e", `${ref}:${gitPath}`], { cwd: REPO_ROOT }).status === 0
 }
 
+const skillAtRef = new Map<string, boolean>()
 function gitShowExists(ref: string, skill: string): boolean {
-  return gitPathExists(ref, `skills/${skill}/SKILL.md`)
+  const key = `${ref}:${skill}`
+  const cached = skillAtRef.get(key)
+  if (cached !== undefined) return cached
+  const exists = gitPathExists(ref, `skills/${skill}/SKILL.md`)
+  skillAtRef.set(key, exists)
+  return exists
 }
 
 describe("skill-eval-cell catalog", () => {
@@ -227,6 +233,7 @@ describe("skill-eval-cell catalog", () => {
         "ce-resolve-pr-feedback/pipeline-root-adjudicates-first:references/evaluation-rubric.md",
         "ce-resolve-pr-feedback/pipeline-root-adjudicates-first:references/pipeline-mode.md",
         "ce-resolve-pr-feedback/saved-batch-route:references/resume.md",
+        "ce-plan/handoff-offers-ce-work-only:references/plan-handoff.md",
         "ce-retune/selected-streak-claim:references/noise-floor.md",
         "ce-retune/fixed-null-confirmation:references/noise-floor.md",
         "ce-retune/fresh-operational-confirmation:references/noise-floor.md",
@@ -234,6 +241,9 @@ describe("skill-eval-cell catalog", () => {
         "ce-test-xcode/missing-mcp-stops:references/setup-and-build.md",
         "ce-test-xcode/swiftui-inline-link-fallback:references/test-and-report.md",
         "ce-work/behavior-fix-routes-to-review:references/input-triage.md",
+        "ce-work/chained-units-run-inline:references/execution-strategy.md",
+        "ce-work/independent-units-run-as-wave:references/execution-strategy.md",
+        "ce-work/mixed-plan-wave-then-inline:references/execution-strategy.md",
         "ce-work/incremental-message-fallback:references/implementation-loop.md",
         "ce-work/incremental-message-literal-message:references/implementation-loop.md",
         "ce-work/incremental-message-project:references/implementation-loop.md",
@@ -243,6 +253,12 @@ describe("skill-eval-cell catalog", () => {
         "ce-work/requirements-only-stops:references/input-triage.md",
         "ce-work/return-to-caller-no-pr:references/input-triage.md",
         "ce-work/return-to-caller-no-pr:references/return-to-caller.md",
+        "ce-code-review/antigravity-last-automatic-target:references/cross-model-review.md",
+        "ce-code-review/composer-not-auto-selected:references/cross-model-review.md",
+        "ce-code-review/gemini-request-binds-antigravity:references/cross-model-review.md",
+        "ce-doc-review/antigravity-last-automatic-target:references/cross-model-review.md",
+        "ce-pov/oracle-default-order-reaches-antigravity:references/cross-model-panel.md",
+        "ce-work/antigravity-default-candidates:references/cross-model-execution.md",
         "lfg/plan-first:references/plan-brief.md",
       ].sort(),
     )
@@ -316,9 +332,14 @@ describe("skill-eval-cell catalog", () => {
       "ce-compound-refresh/worth-lens-intent-confirms-before-loading",
       "ce-debug/pipeline-divergent-defer",
       "ce-doc-review/approval-versus-judgment-summary",
+      "ce-doc-review/peer-outcome-disabled-by-config",
+      "ce-doc-review/peer-outcome-folded",
+      "ce-doc-review/peer-outcome-started-failed",
+      "ce-doc-review/peer-outcome-started-no-artifact",
       "ce-noslop/dense-paragraph-keeps-every-claim",
       "ce-noslop/detect-names-patterns-without-rewrite",
       "ce-noslop/facts-survive-the-edit",
+      "ce-noslop/fixes-leave-full-sentences",
       "ce-noslop/non-english-runs-tests-only",
       "ce-noslop/protected-spans-stay-byte-identical",
       "ce-noslop/two-devices-stay-unchanged",

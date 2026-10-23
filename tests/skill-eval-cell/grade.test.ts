@@ -147,6 +147,26 @@ describe("skill-eval-cell host grade", () => {
     expect(fail.ok).toBe(false)
   })
 
+  test("json_field reads a top-level field of the parsed answer, not a nested match", () => {
+    const grade = { json_field: [{ field: "peer.outcome", any_of: ["folded"] }] }
+    const nested = hostDir({
+      "stdout.txt": '{"status":"complete","coverage":{"peer":{"outcome":"folded"}}}\nFILES_READ: SKILL.md\n',
+    })
+    const nestedGrade = gradeHost({ host: "claude", hostDir: nested, arm: "post", grade })
+    expect(nestedGrade.ok).toBe(false)
+    expect(nestedGrade.reasons[0]).toContain("peer.outcome is undefined")
+    const prefixed = hostDir({
+      "stdout.txt": 'Here is the result:\n{"status":"complete","peer":{"outcome":"folded"}}\n',
+    })
+    const prefixedGrade = gradeHost({ host: "claude", hostDir: prefixed, arm: "post", grade })
+    expect(prefixedGrade.ok).toBe(false)
+    expect(prefixedGrade.reasons[0]).toContain("does not begin with a JSON object")
+    const top = hostDir({
+      "stdout.txt": '{"status":"complete","peer":{"outcome":"folded","coverage":"a {brace} \\" quote"}}\nFILES_READ: SKILL.md\n',
+    })
+    expect(gradeHost({ host: "claude", hostDir: top, arm: "post", grade }).ok).toBe(true)
+  })
+
   test("workspace_read fails when FILES_READ omits the fixture file", () => {
     const dir = hostDir({
       "stdout.txt": "What should retry cover?\nFILES_READ: SKILL.md, references/interaction-rules.md\nACTIONS: none\n",
@@ -501,6 +521,28 @@ describe("skill-eval-cell host grade", () => {
     expect(g.ok).toBe(true)
   })
 
+  test("result_must_include fails when only the summary line keeps the phrase", () => {
+    const dir = hostDir({
+      "stdout.txt": [
+        "RESULT-START",
+        "The scheduler keeps p95 wait time under 2 seconds.",
+        "RESULT-END",
+        "Kept \"typically\" unchanged.",
+        "FILES_READ: certainty.md",
+        "ACTIONS: none",
+        "",
+      ].join("\n"),
+    })
+    const g = gradeHost({
+      host: "claude",
+      hostDir: dir,
+      arm: "post",
+      grade: { result_must_include: ["typically", "2 seconds"], actions: "none" },
+    })
+    expect(g.ok).toBe(false)
+    expect(g.reasons).toEqual(["missing from RESULT block: typically"])
+  })
+
   test("result_must_not_include reads the marker lines, not a later mention of the markers", () => {
     const dir = hostDir({
       "stdout.txt": [
@@ -653,7 +695,7 @@ describe("skill-eval-cell host grade", () => {
 })
 
 describe("skill-eval-cell grade: phrasing-tolerant pins", () => {
-  const base = { host: "claude", arm: "post" as const }
+  const base = { host: "claude" as const, arm: "post" as const }
   function hostDir(stdout: string): string {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "grade-any-"))
     fs.mkdirSync(path.join(dir, "workspace"), { recursive: true })

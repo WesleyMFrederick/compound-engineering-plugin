@@ -21,6 +21,8 @@ export type HostResolution = {
 }
 
 export function attestCurrentHost(env: NodeJS.ProcessEnv = process.env): CurrentHost {
+  // oh-my-pi copies CLAUDECODE=1 into every session, and omp is not an eval host.
+  if (env.OMPCODE) return "unknown"
   if (env.CLAUDECODE === "1") return "claude"
   if (
     env.CODEX_SANDBOX ||
@@ -100,6 +102,7 @@ export function cellEnv(base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEn
   // Each cell's CLI re-sets its own attestation markers; an inherited marker
   // from the launching harness makes the child attest as the wrong host.
   delete env.CLAUDECODE
+  delete env.OMPCODE
   delete env.CODEX_SANDBOX
   delete env.CODEX_SANDBOX_NETWORK_DISABLED
   delete env.CODEX_SESSION_ID
@@ -210,7 +213,7 @@ export function wrapPrompt(opts: {
       (c) =>
         `When it tells you to invoke the \`${c.name}\` skill, invoke it by reading ${path.join(c.dir, "SKILL.md")} and following it, resolving its references from that directory. Do not use an installed plugin copy of \`${c.name}\`.`,
     ),
-    `The project workspace is ${opts.workspace}. Stay inside it.`,
+    `The project workspace is ${opts.workspace}. Stay inside it, except for private scratch files the skill tells you to create under the system temp directory.`,
     ``,
     `Task:`,
     opts.task,

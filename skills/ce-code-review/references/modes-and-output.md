@@ -45,6 +45,8 @@ Emit a one-line failure reason. In `mode:agent`, return JSON: `{"status":"failed
 
 Default and `mode:agent` are **report-only**. `mode:agent` changes only the serialization from markdown to JSON for programmatic callers; it does not change reviewer selection, merge logic, or scope rules. `apply:local` is separate mutation authority, not an output mode. The default markdown is the human view; keep it ASCII-safe (pipe tables, `->` not middot `·`, no box-drawing) so it degrades gracefully across terminals.
 
+Whatever this skill returns, including a failed, degraded, or skipped result, is the last thing it writes. It ends this skill, not the turn. When a caller invoked this skill, control returns to the caller in this same session, and the caller's own handling of the result decides whether its run continues or stops; otherwise end the turn.
+
 ## Quick Review Short-Circuit
 
 If the invocation arguments indicate the user wants a quick, fast, or light code review — and **`mode:agent` is not active** — do not dispatch the multi-agent flow.
@@ -128,6 +130,14 @@ Minimum shape:
   "run_id": "<run-id>"
 }
 ```
+
+`peer` tells a caller whether a different-provider peer actually reviewed the change. It is not part of the minimum shape: add it only when this run selected the adversarial lens (the full roster selected it, or the focused path ran), and never on lite. Its shape:
+
+```json
+"peer": {"outcome": "folded | in-process-fallback | not-run | no-usable-output | failed", "coverage": "<the Coverage sentence for this outcome>"}
+```
+
+On the full path, copy `outcome` and `coverage` verbatim from the `peer` record in `finish-input.json`; the focused path fills them from its own fold-in, using the same outcome names and Coverage sentences. `folded` is the only outcome in which a peer artifact was folded into this review. Every other outcome means no peer artifact was folded, and `coverage` says why and what covered the lens instead. An outcome other than `folded` never changes `status`.
 
 Lite fills `findings`, `actionable_findings`, `testing_gaps`, `residual_risks`, and `requirements_completeness` (`null` only when no plan was found) from its own review. The arrays owned by reviewers it did not run (`learnings`, `agent_native_gaps`, `deployment_notes`, `pre_existing_findings`, `triage_groups`) are `[]`, and Coverage names them as not assessed. `reviewers` is `["correctness"]` and `coverage.depth` is `"lite"`. Focused fills the same fields from its merged findings, lists its two reviewers, and sets `coverage.depth` to `"focused"`; the full path's finish leaf fills every field and sets `coverage.depth` to `"full"`.
 

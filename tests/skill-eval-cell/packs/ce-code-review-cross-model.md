@@ -7,7 +7,8 @@ adversarial pass. Deterministic route tests cover the worker; these cases cover
 the SKILL.md/reference orchestration that only a fresh agent can execute. Inject
 the current `SKILL.md`, `references/cross-model-review.md`, and the relevant
 Stage 5 synthesis prose through the `skill-creator` workflow. Run on Claude Code
-and Codex with fake peer CLIs first on PATH.
+and Codex with a stub `npx` first on PATH that replays canned acpx streams
+(`tests/fixtures/acp-stub-npx.sh`), plus a dummy executable for the routed CLI.
 
 ## Eval cases
 
@@ -40,6 +41,11 @@ and Codex with fake peer CLIs first on PATH.
 5. **Failures are additive and non-blocking.** A missing CLI means no job starts;
    a human-facing markdown review reports the pass as not run. A started timeout, failure,
    or unusable return is named in Coverage and the in-process review completes.
+   In `mode:agent`, a run that selected the adversarial lens carries a `peer`
+   object whose `outcome` is `folded` only when a peer artifact was folded; any
+   other outcome (never started, failed, no usable output) is recorded with its
+   Coverage sentence and leaves `status` unchanged. A run that did not select the
+   lens leaves `peer` absent.
    The worker never changes recipients internally; any recipient-changing retry
    requires a new disclosure and sanction.
 
@@ -60,7 +66,8 @@ and Codex with fake peer CLIs first on PATH.
    serving families differ attestably. Receiptless routes say "requested
    <model> at <effort>" with no serving caveat; a caveat appears only on a
    receipt mismatch or a route that requested no model. `mode:agent` emits no
-   user-facing prose but retains the worker's stderr audit record.
+   user-facing prose but retains the worker's stderr audit record; its JSON
+   still records the peer outcome.
 
 9. **Oversized diffs recover without one giant prompt.** A fixture above the
    inline token or file-count limit sends the peer the orchestrator's compact
@@ -70,9 +77,32 @@ and Codex with fake peer CLIs first on PATH.
    them further rather than returning a progress note or silently omitting the
    pass. A normal-sized fixture keeps the direct diff path.
 
+10. **Antigravity is the last automatic target.** On a Claude host with only
+    `agy_acp_server.par` and its helper on PATH (no `codex`, `grok`, or
+    `cursor-agent`) and no preference, the orchestrator resolves target and
+    route `antigravity`, announces a Gemini model at high effort with
+    reviewed-code egress to Google, and dispatches. The receipt records
+    `model_actual: unverified`.
+
+11. **Restraint when Antigravity is absent.** With `codex` absent, the grok CLI
+    on PATH, and no Antigravity runtime, the pass picks `grok`. With no peer
+    installed at all, it reports the pass as not run. Neither run mentions
+    Gemini or an Antigravity fallback.
+
+12. **Composer runs only when named.** With `cursor-agent` and Antigravity on
+    PATH, no `codex` or grok CLI, and no preference, the pass never selects
+    target `composer` (it may bind Grok through Cursor). With
+    `cross_model_peer: composer`, or "use composer for the cross-model pass" in
+    conversation, it resolves target and route `composer`.
+
+13. **"Gemini" binds `antigravity`.** "Use Gemini for the cross-model pass"
+    resolves target and route `antigravity`, never a Cursor route. With
+    `CROSS_MODEL_PEERS=gemini` the route is not sanctioned and the skip is
+    named; `CROSS_MODEL_PEERS=antigravity` sanctions it.
+
 ## Pass criteria
 
-All nine cases pass on the current on-disk source on Claude Code and Codex. The
+All thirteen cases pass on the current on-disk source on Claude Code and Codex. The
 negative activation cases launch no peer, the fixed-route cases perform no
 worker-internal recipient fallback, and only `independence_verified: true`
 artifacts can promote agreement.

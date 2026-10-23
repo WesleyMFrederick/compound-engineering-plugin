@@ -111,7 +111,7 @@ Before each task, it checks whether the unit's work already exists and matches t
 
 ### Engine, workspace, and scheduling are separate decisions
 
-Ordinary synchronous native work stays in the active checkout. Each implementation unit gets a fresh, single-use native worker context using whatever isolation the current harness provides. A detached external worker always gets a private linked worktree. The host alone applies, verifies, and commits that result in the canonical checkout.
+Independent units in the same dependency layer run as a parallel wave of fresh, single-use native workers, using whatever isolation the current harness provides. That spends more tokens than working inline, in exchange for finishing sooner. Units that must run in sequence gain no time from a worker, so they run inline in the active checkout unless the context is crowded enough that a fresh window would help. A detached external worker always gets a private linked worktree. The host alone applies, verifies, and commits that result in the canonical checkout.
 
 The scheduler may author a bounded wave concurrently only after checking dependencies, actual and expected paths, shared interfaces, generated or config surfaces, migrations, and shared runtime resources. Results then fold in one at a time against the advancing canonical tree. A clean patch is not proof of semantic compatibility; overlap or uncertainty returns the affected work to host resolution, re-dispatch, or serial execution.
 
@@ -263,7 +263,7 @@ work_engine_preferences:
 
 The [central configuration reference](./configuration.md#implementation-routing) explains how this checkout-local default interacts with current-task, session, and project instructions.
 
-Each candidate has a `harness` (`codex`, `claude`, `grok`, `cursor`, or `opencode`) and an optional `model`. Omitting `model` means that harness's configured default. Composer is a model family reached through Cursor, so it is written as `harness: cursor` plus `model: composer`. Keep CLI flags and commands out of config.
+Each candidate has a `harness` (`codex`, `claude`, `grok`, `cursor`, `opencode`, or `antigravity`) and an optional `model`. Omitting `model` means that harness's configured default. Antigravity runs only Gemini models: with no `model`, `ce-work` uses `gemini-4-argon` when your account offers it and otherwise `gemini-3.8-flash`, checked before anything is sent. Composer is a model family reached through Cursor, so it is written as `harness: cursor` plus `model: composer`. Keep CLI flags and commands out of config.
 
 To choose the reasoning effort the external worker runs at, add a `work_engine_effort` map from harness to one of that harness's own levels:
 
@@ -273,7 +273,7 @@ work_engine_effort:
   claude: max
 ```
 
-A harness left out keeps its default (Codex and Claude at high, native Grok at xhigh), and Cursor routes have no effort setting. A level the harness cannot run makes that entry unavailable, and `ce-work` moves to the next one. Effort is set in config only. The run fixes it at the start and reports it as requested; no harness confirms the effort it served. See the [central configuration reference](./configuration.md#implementation-routing) for levels, timeouts, and layering.
+A harness left out keeps its default (Codex, Claude, and Antigravity at high, native Grok at xhigh), and OpenCode and Cursor routes have no effort setting. Antigravity takes `low`, `medium`, or `high`. A level the harness cannot run makes that entry unavailable, and `ce-work` moves to the next one. Effort is set in config only. The run fixes it at the start and reports it as requested; no harness confirms the effort it served. See the [central configuration reference](./configuration.md#implementation-routing) for levels, timeouts, and layering.
 
 `off`, a commented or missing mode, and an invalid mode preserve the native default. `off` affects only standing config; it does not cancel applicable live intent or a caller binding. Both `prefer` and `require` try ordered candidates, then fall back natively on the current harness and session model with one disclosure. `require` keeps the requested external identity fixed while viable and never substitutes an unrequested external recipient.
 
@@ -282,6 +282,8 @@ A candidate is usable only after its unattended, write-capable, isolated-workspa
 ### What an External Run Does
 
 Before any repository material leaves the host, `ce-work` discloses the instruction or config source, the fixed recipient, what bounded unit material is exposed, and which restrictions are adapter-enforced versus cooperative. The adapter uses the CLI's existing authentication, receives a minimized environment, and cannot switch recipients, widen scope, push, open a PR, or choose fallback.
+
+Every external worker runs through [acpx](https://github.com/openclaw/acpx), which talks to the agent CLI over the Agent Client Protocol. It needs Node 22.13 or newer with `npx`, `jq`, and the route's own CLI. On native Windows, OpenCode is reported unavailable, because acpx cannot launch it there. Antigravity needs its ACP runtime (`agy_acp_server.par`) on `PATH` with the `localharness_external` helper beside it, a separate download from the `agy` CLI that `ce-setup` links to; it is not yet supported on native Windows. The runtime has its own Google sign-in, separate from the `agy` CLI's: put `{"auth":{"type":"oauth-personal"}}` in `~/.gemini/antigravity-acp/settings.json`, then run `acpx antigravity exec ok` once in a terminal and finish the browser sign-in (the skip message gives the exact pinned command). Each Antigravity run uses a private settings home, so your own Antigravity or Gemini settings, skills, and API keys are not used. The first run fetches a pinned acpx version from npm; later runs reuse the npm cache. When a prerequisite is missing, the route is reported unavailable and nothing is sent. The worker runs in the unit's workspace with its permission requests approved, so no route confines it to that workspace: each is recorded as cooperative. Codex's shell commands still run in its sandbox, with no network access and no writes outside the workspace and temp directories, but its edit tool can write elsewhere when Codex's own review approves. Claude runs in safe mode, so the checkout's project settings and hooks do not apply to it. Served models are recorded from what each adapter reports. Codex, Claude, and the native Grok CLI report one; Cursor, OpenCode, and Antigravity routes stay unverified.
 
 Each external unit starts from a clean recorded SHA in a detached linked worktree under `/tmp/compound-engineering-<effective-uid>/ce-work/<run-id>/` (or `$TMPDIR/compound-engineering-<effective-uid>/ce-work/<run-id>/` when `/tmp` cannot host a writable private root, as in a sandbox that only allowlists `$TMPDIR`). This is same-user concurrency and accidental-mutation containment, **not a security sandbox**. Synchronous native units still use the active checkout; `ce-work` does not create a temporary worktree for every unit. If the selected plan is the only dirty path, `ce-work` discloses and creates a plan-only checkpoint commit first. Any unrelated dirt makes the external route unavailable.
 
@@ -328,6 +330,15 @@ After review, `ce-work` drops incorrect or low-value suggestions and applies jus
 
 **Does `ce-work` support non-software plans?**
 For a plan marked `execution: knowledge-work` (produced by `ce-plan`'s approach-altitude flow), yes. The carve-out reads the sources, synthesizes, and produces the deliverable, skipping the commit/test/PR lifecycle. Other non-software work without that marker still ends at `ce-plan`, and a human executes it.
+
+**Can I run `ce-work` under `/goal`?**
+Yes, if you want the harness to keep re-prompting until the run finishes. `ce-plan` no longer offers `/goal` as a separate way to execute a plan, because that path skipped `ce-work`'s review receipt and its protection for uncommitted files. Type the goal yourself and make `ce-work`'s finished state the condition:
+
+```text
+/goal The ce-work skill has implemented docs/plans/<plan>.md and finished its shipping handoff (a PR or a local commit) with a code-review receipt or an authorized review-skip phrase, or reported a blocker
+```
+
+The `/goal` evaluator reads only the transcript, so name a state the transcript shows: when it finishes, `ce-work` prints where the work landed (a PR URL, or the local commit when it ships without a PR) and its review receipt or skip phrase.
 
 **What happens if I pass a requirements-only brainstorm file?**
 The run stops and tells you the Product Contract needs `ce-plan` enrichment first. It offers the exact `ce-plan <plan-path>` handoff. Blank invoke does the same if the newest matching artifact is still requirements-only.
