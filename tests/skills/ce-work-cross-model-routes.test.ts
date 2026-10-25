@@ -296,11 +296,13 @@ describe("ce-work fixed write routes", () => {
     ["claude", "max", "effort=max"],
     ["grok-cli", "medium", "reasoning_effort=medium"],
     ["antigravity", "low", "thinking_level=low"],
+    ["opencode", "max", "mode=build --config-option effort=max"],
+    ["opencode", "none", "mode=build --config-option effort=none"],
   ])("CROSS_MODEL_EFFORT_OVERRIDE retunes %s to %s", (route, value, option) => {
     expect(emit(route, { ...cleanEnv(), CROSS_MODEL_EFFORT_OVERRIDE: value }).stdout).toContain(option)
   })
 
-  // Cursor fixes effort in its model preset and OpenCode has no effort option over ACP.
+  // Cursor fixes effort in its model preset.
   test.each([
     ["codex", "minimal"],
     ["codex", "none"],
@@ -309,7 +311,7 @@ describe("ce-work fixed write routes", () => {
     ["cursor", "high"],
     ["composer", "high"],
     ["grok-cursor", "high"],
-    ["opencode", "max"],
+    ["opencode", "minimal"],
     ["antigravity", "xhigh"],
   ])("CROSS_MODEL_EFFORT_OVERRIDE rejects %s at %s, failing closed before dispatch", (route, value) => {
     const proc = emit(route, { ...cleanEnv(), CROSS_MODEL_EFFORT_OVERRIDE: value })
@@ -533,6 +535,7 @@ describe("ce-work fixed write routes", () => {
     ["claude", "max", "effort=max"],
     ["grok-cli", "low", "reasoning_effort=low"],
     ["antigravity", "low", "thinking_level=low"],
+    ["opencode", "high", "effort=high"],
   ] as const)("%s builds its effort option from the authorized effort %s", (route, effort, expected) => {
     const f = fixture()
     const digest = createHash("sha256").update(readFileSync(f.packet)).digest("hex")
@@ -562,7 +565,7 @@ describe("ce-work fixed write routes", () => {
   test.each([
     ["cursor", "high"],
     ["grok-cli", "max"],
-    ["opencode", "max"],
+    ["opencode", "minimal"],
     ["antigravity", "xhigh"],
   ] as const)("an authorized effort the %s route cannot honor publishes an unavailable receipt", (route, effort) => {
     const f = fixture()
@@ -695,6 +698,14 @@ describe("ce-work fixed write routes", () => {
     expect(captured(f, "launch-env")).toContain(`CODEX_PATH=${path.join(bundle, "codex")}`)
   })
 
+  test("the codex route disables the user's Codex plugins so the peer cannot pick up CE skills (issue #1788)", () => {
+    const f = fixture()
+    const bin = stubBin(f)
+    const result = run("codex", f, { ...cleanEnv(), PATH: isolatedPath(bin) })
+    expect(result.result.terminal_status).toBe("completed")
+    expect(captured(f, "launch-env")).toContain('CODEX_CONFIG={"features":{"plugins":false}}\n')
+  })
+
   test.each([...ROUTES])("%s is unavailable when enforceable confinement is required", (route) => {
     const f = fixture()
     const bin = stubBin(f)
@@ -720,6 +731,23 @@ describe("ce-work acpx outcomes", () => {
     expect(ok.result.terminal_status).toBe("completed")
   })
 
+  test("a model the provider rejects in reply text is named in the failure reason with the advertised models", () => {
+    const f = fixture()
+    const result = run("codex", f, withBin(stubBin(f, path.join(STREAMS, "model-rejected-end-turn"))))
+    expect(result.code).toBe(1)
+    expect(result.result.terminal_status).toBe("failed")
+    expect(result.result.failure_reason).toContain("The 'gpt-6-luna' model is not supported when using Codex with a ChatGPT account.")
+    expect(result.result.failure_reason).toContain("advertised models: gpt-6.1-sol, gpt-6-sol, gpt-6-luna, gpt-5.6-sol")
+  })
+
+  test("a cancelled turn after a refused permission names that refusal", () => {
+    const f = fixture()
+    const result = run("codex", f, withBin(stubBin(f, acpStream({ stopReason: "cancelled", exit: 5, text: "partial" }))))
+    expect(result.code).toBe(1)
+    expect(result.result.failure_reason).toContain("permission request cancelled the turn")
+    expect(result.result.failure_reason).not.toContain("stopReason=cancelled")
+  })
+
   test.each([
     ["cancelled", acpStream({ stopReason: "cancelled" }), "ended with cancelled"],
     ["errored", acpStream({ error: "quota exhausted", exit: 1 }), "quota exhausted"],
@@ -733,6 +761,19 @@ describe("ce-work acpx outcomes", () => {
     expect(result.result.failure_reason).toContain(reason)
     expect(readFileSync(path.join(f.resultDir, "adapter.log"), "utf8")).toContain("session/prompt")
     expect(argv(f)).toContain("grok-build")
+  })
+
+  test("the first line of a Node startup error is the pre-egress reason", () => {
+    const f = fixture()
+    const base = path.join(temp("ce-work-node-"), "s")
+    const line = "Error [ERR_MODULE_NOT_FOUND]: Cannot find module '@openclaw/fs-safe/dist/advanced.js'"
+    writeFileSync(`${base}.stderr`, `node:internal/modules/esm/resolve:275\n${line}\n    at Function._resolveFilename (node:internal/modules/cjs/loader:1207:15)\n`)
+    writeFileSync(`${base}.exit`, "1\n")
+    const result = run("claude", f, withBin(stubBin(f, base)))
+    expect(result.code).toBe(2)
+    expect(result.result.terminal_status).toBe("unavailable")
+    expect(result.result.failure_reason).toContain(`transport unavailable (pre-egress, route): ${line}`)
+    expect(result.result.failure_reason).not.toContain("acpx exited")
   })
 
   test.each([
