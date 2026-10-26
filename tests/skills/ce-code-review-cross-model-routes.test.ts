@@ -483,6 +483,33 @@ describe("cross-model-adversarial-review diff delivery", () => {
     expect(text).not.toContain("Run: git diff")
   })
 
+  // codex-acp's only refusal option is `cancel`, which ends the turn, so one
+  // escalation request leaves the review with no artifact (#1896).
+  test.each([...ROUTES] as string[])("only the codex prompt rules out escalation requests (%s)", (route) => {
+    const sb = sandbox([ROUTE_BIN[route]])
+    const runDir = makeRunDir()
+    const target = route.startsWith("grok") ? "grok" : route
+    const r = run(["claude" === target ? "codex" : "claude", target, "HEAD", runDir], runDir, {
+      ...sb.env,
+      CROSS_MODEL_FIXED_ROUTE: route,
+      ...(route === "grok-cursor" ? { CROSS_MODEL_PEERS: "grok,cursor" } : {}),
+    })
+    expect(peerOutputs(r.files)).toHaveLength(1)
+    const rule = "never request escalated or out-of-sandbox permissions"
+    if (route === "codex") expect(prompt(sb)).toContain(rule)
+    else expect(prompt(sb)).not.toContain(rule)
+  })
+
+  test("the codex large-diff prompt also rules out escalation requests", () => {
+    const sb = sandbox(["codex"])
+    const runDir = makeRunDir("- Review the changed fixture.\n")
+    const r = run(["claude", "codex", "HEAD~1", runDir], runDir, { ...sb.env, CROSS_MODEL_INLINE_MAX_TOKENS: "1" })
+    expect(r.files).toContain("adversarial-codex.json")
+    const text = prompt(sb)
+    expect(text).toContain("too large to inline safely")
+    expect(text).toContain("never request escalated or out-of-sandbox permissions")
+  })
+
   test("a large diff sends the orchestrator map and the staged diff's path to a route that can read it", () => {
     const sb = sandbox(["claude"])
     const runDir = makeRunDir(
@@ -617,6 +644,13 @@ describe("cross-model-adversarial-review provider selection", () => {
     const runDir = makeRunDir()
     run(["claude", "codex", "HEAD", runDir], runDir, { ...sb.env, CROSS_MODEL_CODEX_APP_DIRS: bundle })
     expect(envLog(sb)).toContain(`CODEX_PATH=${path.join(sb.bin, "codex")}\n`)
+  })
+
+  test("the codex route disables the user's Codex plugins so the peer cannot pick up ce-code-review (issue #1788)", () => {
+    const sb = sandbox(["codex"])
+    const runDir = makeRunDir()
+    run(["claude", "codex", "HEAD", runDir], runDir, { ...sb.env, CODEX_CONFIG: '{"features":{"plugins":true}}' })
+    expect(envLog(sb)).toContain('CODEX_CONFIG={"features":{"plugins":false}}\n')
   })
 
   test("a front-loaded preference overrides the default order", () => {
@@ -785,12 +819,31 @@ describe("cross-model-adversarial-review outcome classification", () => {
     expect(r.stderr).not.toContain("pre-egress")
   })
 
+  // codex-acp streams a provider 400 as reply text and still ends the turn with end_turn.
+  test("a model the provider rejects in reply text is named in skip evidence with the advertised models", () => {
+    const sb = sandbox(["codex"], path.join(STREAMS, "model-rejected-end-turn"))
+    const runDir = makeRunDir()
+    const r = run(["claude", "codex", "HEAD", runDir], runDir, sb.env)
+    expect(r.files).not.toContain("adversarial-codex.json")
+    expect(r.stderr).toContain("The 'gpt-6-luna' model is not supported when using Codex with a ChatGPT account.")
+    expect(r.stderr).toContain("peer skip evidence (advertised models): gpt-6.1-sol, gpt-6-sol, gpt-6-luna, gpt-5.6-sol")
+  })
+
   test("a cancelled turn that exits 0 is not published even with findings in its reply", () => {
     const sb = sandbox(["codex"], acpStream({ text: review(), stopReason: "cancelled", exit: 0 }))
     const runDir = makeRunDir()
     const r = run(["claude", "codex", "HEAD", runDir], runDir, sb.env)
     expect(r.files).not.toContain("adversarial-codex.json")
     expect(r.stderr).toContain("peer skip evidence: stopReason=cancelled")
+  })
+
+  test("a cancelled turn after a refused permission names that refusal", () => {
+    const sb = sandbox(["codex"], acpStream({ text: review(), stopReason: "cancelled", exit: 5 }))
+    const runDir = makeRunDir()
+    const r = run(["claude", "codex", "HEAD", runDir], runDir, sb.env)
+    expect(r.files).not.toContain("adversarial-codex.json")
+    expect(r.stderr).toContain("peer skip evidence: permission request cancelled the turn")
+    expect(r.stderr).not.toContain("peer skip evidence: stopReason=cancelled")
   })
 
   test("a turn that ran out of turns is not published", () => {
@@ -898,6 +951,19 @@ describe("cross-model-adversarial-review acpx transport preflight", () => {
     expect(r.stderr).not.toContain("peer skip evidence")
   })
 
+  test("the first line of a Node startup error is the pre-egress reason", () => {
+    const base = path.join(temp("xmodel-cr-node-"), "s")
+    const line = "Error [ERR_MODULE_NOT_FOUND]: Cannot find module '@openclaw/fs-safe/dist/advanced.js'"
+    writeFileSync(`${base}.stderr`, `node:internal/modules/esm/resolve:275\n${line}\n    at Function._resolveFilename (node:internal/modules/cjs/loader:1207:15)\n`)
+    writeFileSync(`${base}.exit`, "1\n")
+    const sb = sandbox(["codex"], base)
+    const runDir = makeRunDir()
+    const r = run(["claude", "codex", "HEAD", runDir], runDir, sb.env)
+    expect(r.stderr).toContain(`transport unavailable (pre-egress, route): ${line}`)
+    expect(r.stderr).not.toContain("acpx exited 1 before sending the prompt")
+    expect(peerOutputs(r.files)).toEqual([])
+  })
+
   test("an npm resolve on stale cached metadata retries the same route once with fresh metadata", () => {
     const base = path.join(temp("xmodel-cr-stale-"), "s")
     for (const ext of ["stderr", "exit"]) writeFileSync(`${base}.1.${ext}`, readFileSync(path.join(STREAMS, `stale-npm-metadata.${ext}`)))
@@ -990,6 +1056,7 @@ describe("cross-model-adversarial-review normalization", () => {
       findings: [{ title: "t", evidence: ["line 3 drops the guard"], first_evidence: "line 3 drops the guard" }],
       residual_risks: [],
       testing_gaps: [],
+      usage: null,
     })
     expect(r.files.filter((f) => f.endsWith(".raw.json"))).toEqual([])
   })
@@ -1041,6 +1108,14 @@ describe("cross-model-adversarial-review normalization", () => {
     expect(r.stderr.includes("model mismatch")).toBe(mismatch)
   })
 
+  test("an OpenCode effort override sets its ACP effort option", () => {
+    expect(emitAdapter("opencode", SCRIPT, { CROSS_MODEL_EFFORT_OVERRIDE: "xhigh" })).toContain("--config-option mode=plan --config-option effort=xhigh --file")
+  })
+
+  test("without an effort override OpenCode keeps its own default", () => {
+    expect(emitAdapter("opencode")).not.toContain("effort=")
+  })
+
   test("a valid effort override reaches the adapter; an unsupported level is rejected before launch", () => {
     let sb = sandbox(["claude"])
     let runDir = makeRunDir()
@@ -1050,7 +1125,7 @@ describe("cross-model-adversarial-review normalization", () => {
     expect(argv(sb)).toContain("effort=max")
     expect(r.stderr).toContain("(effort max)")
 
-    for (const [route, effort] of [["claude", "minimal"], ["grok-cli", "max"], ["opencode", "high"], ["composer", "high"]]) {
+    for (const [route, effort] of [["claude", "minimal"], ["grok-cli", "max"], ["opencode", "minimal"], ["composer", "high"]]) {
       sb = sandbox([ROUTE_BIN[route]])
       runDir = makeRunDir()
       const target = route.startsWith("grok") ? "grok" : route

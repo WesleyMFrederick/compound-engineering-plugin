@@ -175,7 +175,7 @@ peer_label() {   # <provider> -> fold-in reviewer name; adds the model when the 
 route_effort() {   # <route> -> requested effort: the override where the route takes one, else editorial
   if [ -n "${CROSS_MODEL_EFFORT_OVERRIDE:-}" ]; then
     case "$1" in
-      codex|claude|grok-cli|antigravity) printf '%s' "$CROSS_MODEL_EFFORT_OVERRIDE"; return 0 ;;
+      codex|claude|grok-cli|antigravity|opencode) printf '%s' "$CROSS_MODEL_EFFORT_OVERRIDE"; return 0 ;;
     esac
   fi
   case "$1" in
@@ -252,7 +252,7 @@ route_available() {
 # Every route reaches its agent through acpx, which speaks the Agent Client
 # Protocol and prints the JSON-RPC stream, so one parser covers every CLI.
 # The calling worker supplies route_available, route_model, and log.
-ACPX_VERSION="0.19.6"
+ACPX_VERSION="0.21.0"
 ACPX_UNAVAILABLE=""   # pre-egress reason; ACPX_SCOPE says whether every route shares it
 ACPX_SCOPE=""
 ACPX_NPM_REFRESH=false
@@ -379,7 +379,8 @@ acpx_base_argv() {   # <route> <cwd> <mcp-config> <timeout-secs> <claude-wrapper
     printf '%s\0' npm_config_prefer_offline=true npm_config_fetch_retries=0
   fi
   case "$1" in
-    codex) printf '%s\0' "CODEX_PATH=$(command -v codex)" ;;
+    # codex-acp ignores app-server CLI flags.
+    codex) printf '%s\0' "CODEX_PATH=$(command -v codex)" 'CODEX_CONFIG={"features":{"plugins":false}}' ;;
     claude) printf '%s\0' "CLAUDE_CODE_EXECUTABLE=$5" ;;
     antigravity) printf '%s\0' "GEMINI_HOME=$6" "ANTIGRAVITY_HARNESS_PATH=$(acpx_antigravity_helper)" ;;
   esac
@@ -438,6 +439,36 @@ acpx_failure_evidence() {   # <stream-log>
   evidence="${evidence% }"
   [ "${#evidence}" -gt 300 ] && evidence="${evidence:0:147} ... ${evidence: -147}"
   printf '%s' "$evidence"
+}
+
+# codex-acp streams a provider rejection (such as a model the account may not
+# use) as reply text and still ends the turn with end_turn, so only the reply
+# carries it. Bounded inside jq so a long reply never enters a bash string.
+acpx_reply_evidence() {   # <stream-log>
+  jq -nrR '[inputs | fromjson? | select(.method == "session/update" and .params.update.sessionUpdate == "agent_message_chunk") | .params.update.content.text // empty]
+    | join("") | gsub("\\s+"; " ") | ltrimstr(" ") | rtrimstr(" ")
+    | if length > 300 then .[0:147] + " ... " + .[-147:] else . end' "$1" 2>/dev/null
+}
+
+acpx_advertised_models() {   # <stream-log>
+  jq -nrR '[inputs | fromjson? | .result.models.availableModels[]?.modelId | sub("\\[.*$"; "")]
+    | reduce .[] as $m ([]; if any(.[]; . == $m) then . else . + [$m] end)
+    | join(", ") | if length > 300 then .[0:296] + " ..." else . end' "$1" 2>/dev/null
+}
+
+# Exit 5 is acpx's permission refusal. Paired with stopReason cancelled, the
+# refusal ended the turn. Exit 5 with end_turn means the turn finished. A
+# cancelled turn with any other exit is an interrupt.
+acpx_permission_cancel_reason() {   # <stream-log> <exit-code>
+  [ "$(acpx_outcome "$1")" = cancelled ] && [ "$2" = 5 ] || return 0
+  printf '%s' "permission request cancelled the turn"
+}
+
+acpx_node_startup_line() {   # <stderr-log>
+  local line=""
+  line="$(grep -m1 -E '^Error ' "$1" 2>/dev/null)"
+  [ -n "$line" ] || line="$(grep -m1 -E '^node:' "$1" 2>/dev/null)"
+  printf '%s' "$line"
 }
 # --- end acpx transport -----------------------------------------------------
 
@@ -506,7 +537,8 @@ adapter_argv() {
     claude)   printf '%s\0' --config-option mode=default --config-option "effort=$(route_effort claude)" ;;
     grok-cli) printf '%s\0' --config-option "reasoning_effort=$(route_effort grok-cli)" ;;
     grok-cursor|cursor|composer) printf '%s\0' --config-option mode=ask ;;
-    opencode) printf '%s\0' --config-option mode=plan ;;
+    opencode) printf '%s\0' --config-option mode=plan
+      [ -z "${CROSS_MODEL_EFFORT_OVERRIDE:-}" ] || printf '%s\0' --config-option "effort=$(route_effort opencode)" ;;
     antigravity) printf '%s\0' --config-option mode=default --config-option "thinking_level=$(route_effort antigravity)" ;;
   esac
   printf '%s\0' --file "$PROMPT_FILE"
@@ -535,12 +567,13 @@ validate_model_override() {
 # effort option and the value is one it advertises (claude effort:
 # low|medium|high|xhigh|max; codex reasoning_effort: low|medium|high|xhigh|max|ultra;
 # grok reasoning_effort: low|medium|high|xhigh; antigravity thinking_level:
-# low|medium|high, checked 2026-10-14). Checked 2026-10-06 against the
+# low|medium|high, checked 2026-10-14; opencode 2.x effort: none|low|medium|
+# high|xhigh|max, checked 2026-10-23). Checked 2026-10-06 against the
 # session options each adapter reports through acpx 0.19.4. Codex levels vary
-# per model, so a listed level can still be refused before the prompt is sent.
-# Cursor routes fix effort in the model preset and OpenCode exposes no effort
-# option over ACP, so any override there is invalid for the route rather than
-# silently dropped. Empty means "no override".
+# and OpenCode levels vary per model, and OpenCode 1.x has no effort option,
+# so a listed level can still be refused before the prompt is sent.
+# Cursor routes fix effort in the model preset, so any override there is
+# invalid for the route rather than silently dropped. Empty means "no override".
 validate_effort_override() {
   local route="$1" effort="${CROSS_MODEL_EFFORT_OVERRIDE:-}"
   [ -n "$effort" ] || return 0
@@ -549,6 +582,7 @@ validate_effort_override() {
     codex:low|codex:medium|codex:high|codex:xhigh|codex:max|codex:ultra) ;;
     grok-cli:low|grok-cli:medium|grok-cli:high|grok-cli:xhigh) ;;
     antigravity:low|antigravity:medium|antigravity:high) ;;
+    opencode:none|opencode:low|opencode:medium|opencode:high|opencode:xhigh|opencode:max) ;;
     *) return 1 ;;
   esac
 }
@@ -854,6 +888,10 @@ compose_prompts() {   # <label>
     cp "$SYSTEM_PROMPT_FILE" "$RUN_DIR/prompt-$label.system.md" || return 1
   else
     { write_brief; printf '\n'; write_review_context; } > "$PROMPT_FILE" || return 1
+    # codex-acp's only refusal option is cancel, which ends the turn.
+    if [ "${CROSS_MODEL_FIXED_ROUTE:-}" = codex ]; then
+      printf '\nYour sandbox is read-only and no approval is available: never request escalated or out-of-sandbox permissions (for example to launch a browser, use the network, or write outside the repository). Any permission request ends this review with no result. When a check needs more access than the sandbox gives, reason from the source instead and name the unrun check in residual_risks.\n' >> "$PROMPT_FILE" || return 1
+    fi
     rm -f "$RUN_DIR/prompt-$label.system.md"
   fi
   chmod 600 "$PROMPT_FILE" || return 1
@@ -1233,10 +1271,9 @@ provider_overloaded() {
 }
 
 # Run one route for a provider; leaves a schema-shaped (pre-normalization) $RAW_OUT on success.
-# Success is the prompt's own end_turn result: acpx exits 5 when a permission
-# request was denied even though the turn completed, and exits 0 on a cancelled one.
+# Success is the prompt's own end_turn result, not acpx's exit status.
 attempt_route() {   # <provider> <route>
-  local provider="$1" route="$2" outcome reason started remaining
+  local provider="$1" route="$2" outcome reason started remaining node_line cancel_reason
   : > "$PEERLOG"; : > "$PEERERR"; rm -f "$RAW_OUT" "$OUT" "$TEXT_OUT"
   RUN_SUCCEEDED=false
   PROVIDER_OUTCOME="failed"
@@ -1288,15 +1325,25 @@ attempt_route() {   # <provider> <route>
       elif [ "$SESSION_STALLED" = true ]; then
         PRE_EGRESS="transport unavailable (pre-egress, route): Antigravity is waiting for a Google sign-in; the agy CLI's sign-in does not carry over, so sign the ACP runtime in once: put {\"auth\":{\"type\":\"oauth-personal\"}} in ${GEMINI_HOME:-~/.gemini}/antigravity-acp/settings.json, run npx acpx@$ACPX_VERSION antigravity exec ok in a terminal and finish the browser sign-in, then retry"
       else
-        reason="$(acpx_failure_evidence "$PEERLOG")"
-        PRE_EGRESS="transport unavailable (pre-egress, route): ${reason:-acpx exited $PEER_EXIT before sending the prompt}"
+        node_line="$(acpx_node_startup_line "$PEERERR")"
+        if [ -n "$node_line" ]; then
+          PRE_EGRESS="transport unavailable (pre-egress, route): ${node_line:0:200}"
+        else
+          reason="$(acpx_failure_evidence "$PEERLOG")"
+          PRE_EGRESS="transport unavailable (pre-egress, route): ${reason:-acpx exited $PEER_EXIT before sending the prompt}"
+        fi
       fi
       ;;
     *)
       if [ "$outcome" = error ] && jq -eR 'fromjson? | select(.error.data.errorKind? == "overloaded")' "$PEERLOG" >/dev/null 2>&1; then
         PROVIDER_OUTCOME="overloaded"
       fi
-      log "peer run ended with $outcome (acpx exit $PEER_EXIT)"
+      cancel_reason="$(acpx_permission_cancel_reason "$PEERLOG" "$PEER_EXIT")"
+      if [ -n "$cancel_reason" ]; then
+        log "peer run ended: $cancel_reason (acpx exit $PEER_EXIT)"
+      else
+        log "peer run ended with $outcome (acpx exit $PEER_EXIT)"
+      fi
       ;;
   esac
 }
@@ -1446,15 +1493,20 @@ run_provider() {   # <provider>
     # reason about WHY it was skipped (quota/usage-limit exhaustion vs an ordinary
     # empty review) and, in a repeated-pass session, deprioritize an exhausted
     # route. Harness-agnostic: the agent classifies from the text; this only makes
-    # the evidence visible in out.log. Read only ACP errors or omp's final error,
-    # never a stream event that could echo the document prompt.
+    # the evidence visible in out.log. Read only ACP errors, reply text, or omp's
+    # final error, never a stream event that could echo the document prompt.
     if [ "$PEER_TRANSPORT" = "omp" ]; then
       _pt="$(jq -rs '[.[] | select(.type=="agent_end") | .messages[]? | select(.role=="assistant") | .errorMessage // empty] | last // ""' "$PEERLOG" 2>/dev/null)"
       [ "${#_pt}" -le 300 ] || _pt="${_pt:0:147} ... ${_pt: -147}"
     else
-      _pt="$(acpx_failure_evidence "$PEERLOG")"
+      _pt="$(acpx_permission_cancel_reason "$PEERLOG" "$PEER_EXIT")"
+      [ -n "$_pt" ] || _pt="$(acpx_failure_evidence "$PEERLOG")"
     fi
     [ -n "$_pt" ] && log "  peer skip evidence: $_pt"
+    _pr="$(acpx_reply_evidence "$PEERLOG")"
+    [ -n "$_pr" ] && log "  peer skip evidence (reply): $_pr"
+    _pm="$(acpx_advertised_models "$PEERLOG")"
+    [ -n "$_pm" ] && log "  peer skip evidence (advertised models): $_pm"
     if [ -s "$PEERERR" ]; then
       _pe="$(bounded_failure_evidence "$PEERERR")"
       log "  peer skip evidence (stderr): $_pe"
