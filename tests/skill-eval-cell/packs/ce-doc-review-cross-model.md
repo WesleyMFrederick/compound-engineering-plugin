@@ -24,9 +24,11 @@ as specified.
 
 Cases 11-14 cover the detached launch->wait lifecycle and model-identity
 receipts (the record of which model actually served a route). Case 15 covers
-U8's fixed-route and bounded-adaptability contract.
-Run them with the fake-CLI harness pattern — stub peer CLIs placed first on
-PATH — and cross-host per the repo's eval default: Claude Code AND Codex.
+U8's fixed-route and bounded-adaptability contract. Cases 16-19 cover the
+Antigravity route, the automatic order, and Composer restraint.
+Run them with a stub `npx` placed first on PATH that replays canned acpx
+streams (`tests/fixtures/acp-stub-npx.sh`), plus a dummy executable for the
+routed CLI, and cross-host per the repo's eval default: Claude Code AND Codex.
 
 1. **Activation — at least one trio lens activates (R1, R2).** A document that activates at least one
    trio lens (e.g. a greenfield plan with a high-stakes domain activating
@@ -89,14 +91,18 @@ PATH — and cross-host per the repo's eval default: Claude Code AND Codex.
    document-content egress scope. Call it independent only when serving families are attestably
    different. A failed route never changes recipients internally; any retry is
    a new host decision requiring a new disclosure and sanction.
-   Non-interactive mode → no user-facing prose about the pass (the script still emits the
-   stderr egress audit log).
+   Non-interactive mode → no announce about the pass (the script still emits the
+   stderr egress audit log). The structured result still records `peer.outcome`.
 
 9. **Non-blocking (R11).** With the peer CLI absent/unauthed, or with the fixed
    route failing after dispatch, assert the review completes with all in-process
-   findings. A never-started pass reports "cross-model pass: not run"; a started
-   failed pass is named with its terminal state. No worker-internal recipient
-   fallback is attempted.
+   findings. A never-started pass reports "cross-model pass: not run" on an
+   interactive host. In non-interactive mode an eligible pass that produced no
+   peer artifact records `peer.outcome: in-process-fallback` and a Coverage line
+   naming each owed lens and the reason; a lens that was not activated stays
+   absent. A started failed pass is named with its terminal state, and in
+   non-interactive mode it also records `peer.outcome: in-process-fallback`.
+   No worker-internal recipient fallback is attempted.
 
 10. **Whole-document sweep + trio slicing (R20, KTD6, KTD3).** When the pass runs,
     assert exactly **one** additional `whole-doc` call is launched (not one per
@@ -129,8 +135,10 @@ PATH — and cross-host per the repo's eval default: Claude Code AND Codex.
     stub peer CLI that never finishes, assert the job is reaped at the
     deadline and **named** in Coverage with its lens and terminal state (e.g.
     "cross-model security-lens peer: timeout") — it never silently vanishes —
-    while a lens that was never started (activation condition not met, or
-    skipped) remains silently absent, as before.
+    while a lens that was never started because its activation condition was
+    not met remains absent. An eligible pass that produced no peer artifact is
+    not that case: the non-interactive result records `peer.outcome` and the
+    Coverage line.
 
 14. **Requested-not-served disclosure (lifecycle R8).** On a route that returns
     no record of which model served, assert the announce/reconcile wording names
@@ -147,7 +155,29 @@ PATH — and cross-host per the repo's eval default: Claude Code AND Codex.
     new recipient are rejected. A recipient-changing retry requires a newly
     disclosed and sanctioned dispatch.
 
+16. **Antigravity is the last automatic target.** On a Claude host with only
+    `agy_acp_server.par` and its helper on PATH (no `codex`, `grok`, or
+    `cursor-agent`) and no preference, every activated lens and the whole-doc
+    sweep resolve target and route `antigravity`, and the announce names a
+    Gemini model with full-document egress to Google.
+
+17. **Restraint when Antigravity is absent.** With `codex` absent, the grok CLI
+    on PATH, and no Antigravity runtime, the pass picks `grok`. With no peer
+    installed at all, it reports the pass as not run. Neither run mentions
+    Gemini or an Antigravity fallback.
+
+18. **Composer runs only when named.** With `cursor-agent` and Antigravity on
+    PATH, no `codex` or grok CLI, and no preference, the pass never selects
+    target `composer` (it may bind Grok through Cursor). With
+    `cross_model_peer: composer`, or "use composer for the cross-model pass" in
+    conversation, it resolves target and route `composer`.
+
+19. **"Gemini" binds `antigravity`.** "Use Gemini for the cross-model pass"
+    resolves target and route `antigravity`, never a Cursor route. With
+    `CROSS_MODEL_PEERS=gemini` the route is not sanctioned and the skip is
+    named; `CROSS_MODEL_PEERS=antigravity` sanctions it.
+
 ## Pass criteria
 
-All fifteen cases pass on the current on-disk source, and case 2 confirms the
+All nineteen cases pass on the current on-disk source, and case 2 confirms the
 conditional cost profile (no peer spawn on a routine validated plan).
