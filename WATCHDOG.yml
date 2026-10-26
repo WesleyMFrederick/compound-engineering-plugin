@@ -1,0 +1,4 @@
+advisors:
+  - name: default
+    model: openai-codex/gpt-6.1-sol:medium
+    reviewMode: agent-end
